@@ -1,0 +1,13 @@
+diff --git a/pyproject.toml b/pyproject.toml
+index 3017da4..5f02d2c 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -36,7 +36,7 @@ requires-python = ">=3.9, <3.13"
+ dependencies = [
+     'numpy<2.0',   
+     'pyarrow<21',
+-    'cellpose<4.0',
++    'cellpose>=4.2.1.1,<4.3',
+     'cupy-cuda12x; sys_platform!="darwin"',
+     'dask[complete]',
+     'scikit-image',

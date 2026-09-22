@@ -1,0 +1,21 @@
+{
+  "seed": 20260921,
+  "input_size": 64,
+  "epochs": 50,
+  "batch_size": 16,
+  "learning_rate": 0.0001,
+  "weight_decay": 0.05,
+  "base_channels": 8,
+  "embedding_dim": 128,
+  "number_of_views": 2,
+  "augmentation_scale": [0.95, 1.05],
+  "augmentation_translation": 0.04,
+  "intensity_gain": [0.8, 1.2],
+  "intensity_gamma": [0.8, 1.2],
+  "intensity_noise_std": 0.02,
+  "validation_every": 5,
+  "device": "mps",
+  "data_dir": "results/simclr3d_raw_isolated",
+  "data_file": "isolated_raw64.npy",
+  "output_dir": "results/icone3d_raw_isolated"
+}

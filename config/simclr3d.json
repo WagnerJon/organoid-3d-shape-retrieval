@@ -1,0 +1,21 @@
+{
+  "seed": 20260921,
+  "input_size": 64,
+  "rotation_safe_padding": 1.15,
+  "training_cohort": "shape_qc_pass",
+  "validation_stack_fraction": 0.2,
+  "split_gap_stacks": 4,
+  "epochs": 50,
+  "batch_size": 16,
+  "learning_rate": 0.0003,
+  "weight_decay": 0.0001,
+  "temperature": 0.2,
+  "warmup_epochs": 5,
+  "base_channels": 8,
+  "embedding_dim": 128,
+  "projection_dim": 64,
+  "augmentation_scale": [0.95, 1.05],
+  "augmentation_translation": 0.04,
+  "validation_every": 5,
+  "device": "mps"
+}

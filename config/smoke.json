@@ -1,0 +1,16 @@
+{
+  "data_dir": "data/Mouse-Organoid-Cells-CBG/train",
+  "spacing_zyx_um": [
+    1.0,
+    0.1733,
+    0.1733
+  ],
+  "spacing_source": "Dataset literature, not TIFF metadata: https://openreview.net/pdf?id=JM6GuFGayL5; upstream tutorials/tissue/segment_organoid_3D.py",
+  "scale": 0.15,
+  "model": "cpsam_v2",
+  "diameter": 30,
+  "gpu": false,
+  "background_correction": false,
+  "gradient_decay": 0.05,
+  "upstream_commit": "33974282e436d456f4941a2c2b9a8c2d1d9ed2fb"
+}

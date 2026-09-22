@@ -1,0 +1,17 @@
+.venv/
+vendor/
+.cache/
+results/
+__pycache__/
+*.pyc
+.DS_Store
+data/
+*.tif
+*.tiff
+*.pt
+*.pth
+*.npy
+*.npz
+*.glb
+*.ply
+*.zip

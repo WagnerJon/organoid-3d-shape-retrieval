@@ -1,0 +1,18 @@
+{
+  "test": {
+    "stacks": 16,
+    "median_nearest_training_correlation": 0.9254342615604401,
+    "minimum": 0.8411409854888916,
+    "maximum": 0.9504272937774658,
+    "above_0_9": 13
+  },
+  "validation": {
+    "stacks": 16,
+    "median_nearest_training_correlation": 0.9221070110797882,
+    "minimum": 0.7775319814682007,
+    "maximum": 0.942744791507721,
+    "above_0_9": 11
+  },
+  "method": "Pearson correlation of TIFF stacks downsampled by [4,8,8], pixel aligned, without registration",
+  "interpretation": "High correlation suggests related fields but does not prove the same biological specimen"
+}

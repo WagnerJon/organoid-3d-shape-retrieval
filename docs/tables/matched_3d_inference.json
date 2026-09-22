@@ -1,0 +1,42 @@
+{
+  "neighborhood": {
+    "top1_hit": {
+      "student_minus_volume_baseline": 0.16326530612244897,
+      "cluster_bootstrap_95pct": [
+        0.019230769230769232,
+        0.32
+      ],
+      "paired_sample_signflip_p_two_sided": 0.11638836116388361,
+      "independent_query_organoids": 15
+    },
+    "rank_percentile": {
+      "student_minus_volume_baseline": 0.09285714285714286,
+      "cluster_bootstrap_95pct": [
+        0.00740555555555556,
+        0.17811029411764698
+      ],
+      "paired_sample_signflip_p_two_sided": 0.0760923907609239,
+      "independent_query_organoids": 15
+    }
+  },
+  "organoid": {
+    "top1_hit": {
+      "student_minus_volume_baseline": 0.25,
+      "cluster_bootstrap_95pct": [
+        0.0,
+        0.625
+      ],
+      "paired_sample_signflip_p_two_sided": 0.49295070492950704,
+      "independent_query_organoids": 8
+    },
+    "rank_percentile": {
+      "student_minus_volume_baseline": 0.062499999999999986,
+      "cluster_bootstrap_95pct": [
+        0.02083333333333333,
+        0.12499999999999997
+      ],
+      "paired_sample_signflip_p_two_sided": 0.2522747725227477,
+      "independent_query_organoids": 8
+    }
+  }
+}
