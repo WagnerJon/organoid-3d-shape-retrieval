@@ -1,4 +1,28 @@
-# Rotating cell-surface UMAPs
+# Cell-surface animations
+
+## Organoid → shape atlas
+
+The README opens with the 12 included, QC-passing cells from X206 in their original
+relative positions. They separate and travel to their actual spatial-descriptor
+UMAP positions. A 191-cell context preview appears; the UMAP fit still uses all
+744 eligible cells. The query X206:L10 then reveals the three nearest cells from
+other image stacks: X198:L6, X176:L1 and X174:L1. Ranking uses the full
+`spatial_robust` distance, not 2D UMAP proximity. The query was chosen for the
+narrative, not to optimize retrieval quality. Matching stacks need not represent
+independent biological specimens.
+
+Geometry is unchanged: only rigid rotations, translations and uniform display
+scaling animate the surfaces. Colors track source-cell identity; they are not
+biological classes. The cells reassemble to close the 16-second loop. Motion is
+illustrative, not an observed biological process. The existing two-map rotation
+and all-cell MP4 remain available.
+
+After preparing the UMAP results below, regenerate with
+`zsh scripts/render_organoid_atlas_story.sh`. Source mesh hashes, exact neighbor
+distances and UMAP provenance are recorded locally in
+`results/morphology_umap/organoid_story/scene.json`.
+
+## Rotating cell-surface UMAPs
 
 The README loop shows the same 180-cell coverage subset in both maps; both UMAPs
 were fitted on all 744 included, QC-passing cells. The companion MP4 shows all
