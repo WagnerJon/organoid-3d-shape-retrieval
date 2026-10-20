@@ -2,6 +2,10 @@
 
 Exploring cell shape in 3D microscopy: segmentation, classical morphometry, learned representations and reconstruction. **108 stacks · 1,088 segmented cells** from [Mouse-Organoid-Cells-CBG](https://github.com/juglab/EmbedSeg/releases/tag/v0.1.0).
 
+![Original cell surfaces rotating at their UMAP positions: traditional morphometry and spatial shape descriptors](docs/figures/rotating_morphology_umap.gif)
+
+Each cell turns 360° at its fixed UMAP position. The same 180 cells are shown for clarity; both layouts use 744 included, QC-passing cells. [MP4](docs/figures/rotating_morphology_umap.mp4) · [All 744 cells rotating](docs/figures/rotating_morphology_umap_all_cells.mp4)
+
 ## Reconstructing individual cells
 
 ![Original segmented cells and reconstructed surfaces](docs/figures/allen_shape_reconstructions.png)
