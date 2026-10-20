@@ -1,0 +1,92 @@
+[
+  {
+    "id": "generic_confocal_3D_unet",
+    "description": "Unet trained on confocal images of Arabidopsis Ovules on 1/2-resolution in XY with BCEDiceLoss.",
+    "resolution": [
+      0.235,
+      0.15,
+      0.15
+    ]
+  },
+  {
+    "id": "generic_light_sheet_3D_unet",
+    "description": "Unet trained on light-sheet images of Arabidopsis Lateral Root Primordia on original resolution with BCEDiceLoss.",
+    "resolution": [
+      0.25,
+      0.1625,
+      0.1625
+    ]
+  },
+  {
+    "id": "confocal_3D_unet_ovules_ds1x",
+    "description": "Unet trained on confocal images of Arabidopsis Ovules on original resolution with BCEDiceLoss.",
+    "resolution": [
+      0.235,
+      0.075,
+      0.075
+    ]
+  },
+  {
+    "id": "confocal_3D_unet_ovules_ds2x",
+    "description": "Unet trained on confocal images of Arabidopsis Ovules on 1/2-resolution in XY with BCEDiceLoss.",
+    "resolution": [
+      0.235,
+      0.15,
+      0.15
+    ]
+  },
+  {
+    "id": "confocal_3D_unet_ovules_ds3x",
+    "description": "Unet trained on confocal images of Arabidopsis Ovules on 1/3-resolution in XY with BCEDiceLoss.",
+    "resolution": [
+      0.235,
+      0.225,
+      0.225
+    ]
+  },
+  {
+    "id": "lightsheet_3D_unet_root_ds1x",
+    "description": "Unet trained on light-sheet images of Lateral Root Primordia on original resolution with BCEDiceLoss.",
+    "resolution": [
+      0.25,
+      0.1625,
+      0.1625
+    ]
+  },
+  {
+    "id": "lightsheet_3D_unet_root_ds2x",
+    "description": "Unet trained on light-sheet images of Lateral Root Primordia on 1/2-resolution in XY with BCEDiceLoss.",
+    "resolution": [
+      0.25,
+      0.325,
+      0.325
+    ]
+  },
+  {
+    "id": "lightsheet_3D_unet_root_ds3x",
+    "description": "Unet trained on light-sheet images of Lateral Root Primordia on 1/3-resolution in XY with BCEDiceLoss.",
+    "resolution": [
+      0.25,
+      0.4875,
+      0.4875
+    ]
+  },
+  {
+    "id": "confocal_3D_unet_sa_meristem_cells",
+    "description": "3D Unet trained on confocal images of Arabidopsis thaliana apical stem cell: https://www.repository.cam.ac.uk/handle/1810/262530",
+    "resolution": [
+      0.25,
+      0.25,
+      0.25
+    ]
+  },
+  {
+    "id": "lightsheet_3D_unet_mouse_embryo_cells",
+    "description": "A a variant of 3D U-Net trained to predict the cell boundaries in live light-sheet images of ex-vivo developing mouse embryo. Voxel size: (0.2\u00d70.2\u00d71 \u00b5m^3) (XYZ)",
+    "resolution": [
+      1.0,
+      0.2,
+      0.2
+    ]
+  }
+]

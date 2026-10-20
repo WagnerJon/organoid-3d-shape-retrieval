@@ -70,6 +70,18 @@ Raw context-rich crops contain unmasked neighboring cells; isolated raw crops ze
 
 The raw student has no mask input at inference but is trained with a predicted-mask teacher and auxiliary shape targets. The matched audit fixes cell count, restricts total foreground volume to 80–125% of each query, and evaluates normalized pairwise centroid-distance arrangement among different-stack candidates. It does not directly assess cell surfaces or contact topology. The image-similarity audit flags likely related train/test fields but cannot prove specimen identity.
 
+The newer grouped-split experiments reuse prepared 96³ raw fields. Their results and limitations are documented in [the boundary-aware experiment](BOUNDARY_SHAPE_EXPERIMENT.md) and [the shape-aligned metric experiment](SHAPE_METRIC_EXPERIMENT.md):
+
+```bash
+.venv/bin/python scripts/prepare_boundary_shape.py
+.venv/bin/python scripts/start_boundary_shape.py
+.venv/bin/python scripts/prepare_shape_metric.py
+.venv/bin/python scripts/start_shape_metric.py
+tail -f results/shape_metric/pipeline.log
+```
+
+The shape-metric launcher runs three seeds in sequence. It selects checkpoints on validation retrieval and then evaluates matched test retrieval against the earlier boundary-only, untrained raw, and volume-only controls. The reused test split is exploratory because aggregate results from that split informed the new experiment design.
+
 ## Validation and public figures
 
 ```bash

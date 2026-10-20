@@ -85,12 +85,16 @@ def preview(raw, reference, prediction, path):
     plt.close(fig)
 
 
-def run(image, mask, config, folder):
+def predict(image, config, folder, progress=None):
+    """Image-only prediction shared by batch reconstruction and the native explorer."""
+    report = progress or (lambda *args: None)
+    model_name = config['model']
+    report(f"Cellpose {model_name}: loading libraries", .02)
+    folder.mkdir(parents=True, exist_ok=True)
     from segment3D import parameters, usegment3d
     import torch
     if config.get("require_mps") and not torch.backends.mps.is_available():
         raise RuntimeError("This run requires Apple MPS GPU access; run outside the sandbox")
-    start = time.time()
     raw = tifffile.imread(image)
     if raw.ndim != 3:
         raise ValueError("Expected a ZYX image volume")
@@ -98,13 +102,15 @@ def run(image, mask, config, folder):
     pre = parameters.get_preprocess_params()
     pre.update(factor=config["scale"], voxel_res=(spacing / spacing.min()).tolist(),
                do_bg_correction=config["background_correction"], bg_ds=8)
+    report("Cellpose: preprocessing raw volume", .05)
     processed = np.squeeze(usegment3d.preprocess_imgs(raw, pre))
     processed = ndimage.median_filter(processed, size=3)
     cp = parameters.get_Cellpose_autotune_params()
     cp.update(cellpose_modelname=config["model"], gpu=config["gpu"],
               best_diam=config["diameter"], debug_viz=False)
     probs, flows = [], []
-    for view in ["xy", "xz", "yz"]:
+    for view_index, view in enumerate(["xy", "xz", "yz"]):
+        report(f"Cellpose {model_name}: {view.upper()} inference", .1 + .2 * view_index, .2)
         cache = folder / f"{view}.npz"
         if cache.exists():
             with np.load(cache) as saved:
@@ -115,16 +121,24 @@ def run(image, mask, config, folder):
             np.savez_compressed(cache, prob=prob, flow=flow)
         probs.append(prob)
         flows.append(flow)
+    report("u-Segment3D: aggregating orthogonal views", .7)
     agg = parameters.get_2D_to_3D_aggregation_params()
     agg["gradient_descent"]["gradient_decay"] = config["gradient_decay"]
     agg["postprocess_binary"]["binary_fill_holes"] = True
     labels, _ = usegment3d.aggregate_2D_to_3D_segmentation_direct_method(probs, flows, agg)
+    report("Cellpose: writing labels and exporting cell surfaces", .85)
     labels = labels.astype(np.uint32)
     effective_spacing = spacing * np.array(raw.shape) / np.array(labels.shape)
     tifffile.imwrite(folder / "labels_isotropic.tif", labels, metadata={"axes": "ZYX", "spacing_zyx_um": effective_spacing.tolist()})
     native = resize(labels, raw.shape, order=0, preserve_range=True, anti_aliasing=False).astype(np.uint32)
     tifffile.imwrite(folder / "labels_native.tif", native, metadata={"axes": "ZYX", "spacing_zyx_um": spacing.tolist()})
     export(labels, effective_spacing, folder / "meshes")
+    return raw, native, effective_spacing
+
+
+def run(image, mask, config, folder):
+    start = time.time()
+    raw, native, effective_spacing = predict(image, config, folder)
     # Load annotations only after image-only prediction and mesh export have finished.
     reference = tifffile.imread(mask)
     if reference.shape != native.shape:

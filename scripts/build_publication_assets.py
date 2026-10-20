@@ -6,6 +6,8 @@ ROOT = Path(__file__).resolve().parents[1]
 DEST = ROOT / "docs"
 
 FIGURES = {
+    "allen_shape_reconstructions.png": "results/allen_reference/reconstructions.png",
+    "shape_neighbor_comparison.png": "results/point_mae/shape_neighbors.png",
     "cell_size_across_stacks.png": "results/cpsam_v2_all_analysis/across_samples.png",
     "cell_size_shape_distributions.png": "results/cpsam_v2_all_analysis/distributions.png",
     "traditional_vs_context_phenospace.png": "results/organoid_phenotype_report/phenotype_spaces.png",

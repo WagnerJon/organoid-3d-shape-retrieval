@@ -5,7 +5,7 @@ The project is published at [WagnerJon/organoid-3d-shape-retrieval](https://gith
 For later changes, run from the repository root:
 
 ```bash
-git add README.md VALIDATION.md config docs requirements-lock.txt scripts tests
+git add README.md VALIDATION.md config docs native requirements-lock.txt scripts tests
 git diff --cached --stat
 git commit -m "Update organoid analysis"
 git push

@@ -1,0 +1,28 @@
+{
+  "seed": 20261017,
+  "atlas_dataset": "results/explorer_dataset",
+  "split_groups": "results/boundary_shape/split_groups.csv",
+  "output_dir": "results/pointnet_shape",
+  "points": 2048,
+  "embedding_dim": 128,
+  "centers": [512, 128],
+  "neighbors": 32,
+  "epochs": 40,
+  "batch_size": 8,
+  "learning_rate": 0.0003,
+  "weight_decay": 0.0001,
+  "patience": 10,
+  "rotation_augmentation": true,
+  "chamfer_chunk": 256,
+  "device": "auto",
+  "threads": 4,
+  "stage2_gate": {
+    "minimum_completed_epochs": 10,
+    "minimum_validation_cells": 30,
+    "minimum_validation_groups": 3,
+    "minimum_untrained_improvement": 0.15,
+    "minimum_template_improvement": 0.05,
+    "minimum_resampling_top1": 0.8,
+    "minimum_effective_rank": 8
+  }
+}
