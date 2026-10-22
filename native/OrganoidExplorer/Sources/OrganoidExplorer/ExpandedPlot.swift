@@ -8,13 +8,13 @@ final class PlotWindows: NSObject, NSWindowDelegate {
     private var windows: [ObjectIdentifier: NSWindowController] = [:]
     @MainActor func open(method: Method, store: ExplorerStore, threeD: Bool = false,
                          cohort: Set<String>? = nil, groups: [String: Int]? = nil,
-                         colorMethod: String? = nil) {
+                         colorMethod: String? = nil, featureColoring: Bool = false) {
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1200, height: 800),
                               styleMask: [.titled, .closable, .resizable, .miniaturizable], backing: .buffered, defer: false)
         window.title = method.name
         window.collectionBehavior = [.fullScreenPrimary]
         window.contentViewController = NSHostingController(rootView:
-            ExpandedPlotView(method: method, initialThreeD: threeD, cohort: cohort, groups: groups, colorMethod: colorMethod,
+            ExpandedPlotView(method: method, initialThreeD: threeD, cohort: cohort, groups: groups, colorMethod: colorMethod, featureColoring: featureColoring,
                              close: { [weak window] in window?.performClose(nil) },
                              toggleFullScreen: { [weak window] in window?.toggleFullScreen(nil) }).environmentObject(store))
         let controller = NSWindowController(window: window)
@@ -35,6 +35,7 @@ struct ExpandedPlotView: View {
     var cohort: Set<String>?
     var groups: [String: Int]?
     var colorMethod: String?
+    var featureColoring = false
     let close: () -> Void
     let toggleFullScreen: () -> Void
     @State private var threeD = false
@@ -42,6 +43,7 @@ struct ExpandedPlotView: View {
     @State private var error: String?
     @State private var loading = false
     @State private var reset = 0
+    @State private var cellShapes = false
     var isDistanceMap: Bool { ["precomputed", "shape_hybrid95"].contains(method.metric) }
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -56,15 +58,26 @@ struct ExpandedPlotView: View {
                     Text(isDistanceMap ? "2 axes" : "2 PCs").tag(false)
                     Text(isDistanceMap ? "3 axes" : "3 PCs").tag(true)
                 }.pickerStyle(.segmented).labelsHidden().frame(width: 170)
+                Button { cellShapes.toggle() } label: {
+                    Label(cellShapes ? "Points" : "Cell shapes", systemImage: cellShapes ? "circle.grid.3x3" : "cube")
+                }.disabled(store.level != "Cells" || store.folder == nil)
+                    .help("Load reconstructed cell surfaces in this window only")
                 if threeD { Button("Reset camera") { reset += 1 } }
                 Button(action: toggleFullScreen) { Image(systemName: "arrow.up.left.and.arrow.down.right") }.help("Toggle macOS full screen")
                 Button("Done", action: close).keyboardShortcut(.cancelAction)
             }
+            if featureColoring && threeD {
+                let items = store.filtered.filter { cohort?.contains($0.id) ?? true }
+                PlotColorControls(settings: store.plotColorBinding(method.id), features: plotFeatureKeys(store.allItems),
+                                  map: PlotColorMap(settings: store.plotColors(method.id), items: items)).frame(maxWidth: 420)
+            }
             if threeD {
                 if let result {
                     let items = store.filtered.filter { cohort?.contains($0.id) ?? true }
-                    ShapeScatter3D(result: result, items: items, colorMethod: colorMethod ?? method.id, groups: groups,
-                                   selected: store.selectedID, marked: store.selection, reset: reset) { id in
+                    PlotCellScatter3D(result: result, items: items, colorMethod: colorMethod ?? method.id, groups: groups,
+                                   selected: store.selectedID, marked: store.selection, reset: reset,
+                                   folder: store.folder, cellShapes: cellShapes && store.level == "Cells",
+                                   coloring: featureColoring ? store.plotColors(method.id) : PlotColorSettings()) { id in
                         store.markPlotItems([id]); store.select(id)
                     }.clipShape(RoundedRectangle(cornerRadius: 12))
                     HStack(spacing: 24) {
@@ -82,7 +95,7 @@ struct ExpandedPlotView: View {
                 }
             } else {
                 ScatterPanel(methodID: method.id, title: method.name, colorMethodID: colorMethod,
-                             cohortIDs: cohort, groupLabels: groups, showActions: false)
+                             cohortIDs: cohort, groupLabels: groups, featureColoring: featureColoring, showActions: false, cellShapes: $cellShapes)
             }
             Text(threeD ? "Drag to rotate · scroll to zoom · click a cell to mark its table row. Axes retain a shared scale. Three axes are for display; similarity and grouping use the full descriptors."
                  : "Click to select · drag a rectangle to mark cells across plots and tables.")
@@ -98,6 +111,7 @@ struct ExpandedPlotView: View {
             }
         }.padding(20).frame(minWidth: 820, minHeight: 600)
             .onAppear { threeD = initialThreeD }
+            .onChange(of: store.level) { if store.level != "Cells" { cellShapes = false } }
             .task(id: "\(store.folder?.path ?? "")|\(store.level)|\(store.analysisRevision)") {
                 result = nil; error = nil; loading = true
                 guard let folder = store.folder else { loading = false; return }
@@ -108,6 +122,44 @@ struct ExpandedPlotView: View {
                 } catch { if !Task.isCancelled { self.error = error.localizedDescription } }
                 if !Task.isCancelled { loading = false }
             }
+    }
+}
+
+/// Owns only this expanded plot's mesh assets; point mode performs no mesh I/O.
+struct PlotCellScatter3D: View {
+    let result: ShapeAnalysisResult
+    let items: [Specimen]
+    let colorMethod: String
+    var groups: [String: Int]?
+    let selected: String?
+    let marked: Set<String>
+    let reset: Int
+    let folder: URL?
+    let cellShapes: Bool
+    var coloring = PlotColorSettings()
+    let pick: (String) -> Void
+    @StateObject private var assets = PlotCellAssets()
+    @State private var shapeScale = 0.22
+    var plottedItems: [Specimen] { let ids = Set(result.ids); return items.filter { ids.contains($0.id) } }
+    var body: some View {
+        VStack(spacing: 6) {
+            if cellShapes {
+                HStack {
+                    PlotCellLoadStatus(assets: assets)
+                    Text("Shape size").font(.caption2).foregroundStyle(.secondary)
+                    Slider(value: $shapeScale, in: 0.08...0.6).frame(width: 130)
+                        .accessibilityLabel("Cell surface size in this plot")
+                }
+            }
+            ShapeScatter3D(result: result, items: items, colorMethod: colorMethod, groups: groups,
+                           selected: selected, marked: marked, reset: reset, cellShapes: cellShapes,
+                           surfaces: assets.surfaces, shapeScale: Float(shapeScale), coloring: coloring, pick: pick)
+        }
+        .task(id: PlotCellAssets.requestKey(enabled: cellShapes, folder: folder, items: plottedItems)) {
+            guard cellShapes, let folder else { assets.clear(); return }
+            await assets.load(folder: folder, items: plottedItems, mode: .surfaces)
+        }
+        .onDisappear { assets.clear() }
     }
 }
 
@@ -133,6 +185,10 @@ struct ShapeScatter3D: NSViewRepresentable {
     let selected: String?
     let marked: Set<String>
     let reset: Int
+    var cellShapes = false
+    var surfaces: [String: PlotCellSurface] = [:]
+    var shapeScale: Float = 0.22
+    var coloring = PlotColorSettings()
     let pick: (String) -> Void
     func makeCoordinator() -> Coordinator { Coordinator() }
     func makeNSView(context: Context) -> ShapePlotSceneView {
@@ -149,8 +205,10 @@ struct ShapeScatter3D: NSViewRepresentable {
         var signature: Int?
         var nodes: [String: SCNNode] = [:]
         var colors: [String: NSColor] = [:]
+        var surfaceNodes: Set<String> = []
         func update(_ view: ShapePlotSceneView, config: ShapeScatter3D) {
             var hash = Hasher(); hash.combine(config.reset); hash.combine(config.result.method)
+            hash.combine(config.cellShapes)
             let allowed = Dictionary(uniqueKeysWithValues: config.items.map { ($0.id, $0) })
             for (i, id) in config.result.ids.enumerated() where allowed[id] != nil {
                 hash.combine(id); hash.combine(config.result.points?[i])
@@ -158,8 +216,12 @@ struct ShapeScatter3D: NSViewRepresentable {
             }
             let stamp = hash.finalize()
             if signature != stamp {
-                signature = stamp; nodes = [:]; colors = [:]
+                signature = stamp; nodes = [:]; colors = [:]; surfaceNodes = []
                 let scene = SCNScene()
+                let ambient = SCNNode(); ambient.light = SCNLight(); ambient.light?.type = .ambient; ambient.light?.intensity = 500
+                scene.rootNode.addChildNode(ambient)
+                let light = SCNNode(); light.light = SCNLight(); light.light?.type = .directional; light.light?.intensity = 900
+                light.eulerAngles = SCNVector3(-0.5, -0.6, 0); scene.rootNode.addChildNode(light)
                 let camera = SCNNode(); camera.camera = SCNCamera(); camera.position = SCNVector3(10, 8, 12)
                 camera.camera?.zNear = 0.01; camera.camera?.zFar = 200
                 camera.camera?.usesOrthographicProjection = true; camera.camera?.orthographicScale = 5.8
@@ -192,10 +254,21 @@ struct ShapeScatter3D: NSViewRepresentable {
                 view.defaultCameraController.target = SCNVector3Zero
                 view.defaultCameraController.interactionMode = .orbitTurntable
             }
+            let colorMap = PlotColorMap(settings: config.coloring, items: config.items)
             for (id, node) in nodes {
-                node.geometry?.firstMaterial?.diffuse.contents = id == config.selected ? NSColor.systemOrange : colors[id]
+                if let item = allowed[id] {
+                    let group = config.groups.map { $0[id] ?? -1 } ?? item.representations[config.colorMethod]?.cluster ?? -1
+                    colors[id] = colorMap.color(item: item, group: group)
+                }
+                if config.cellShapes, !surfaceNodes.contains(id), let surface = config.surfaces[id] {
+                    let geometry = surface.geometry(), material = SCNMaterial()
+                    material.lightingModel = .lambert; material.isDoubleSided = true
+                    geometry.materials = [material]; node.geometry = geometry; surfaceNodes.insert(id)
+                }
+                node.geometry?.firstMaterial?.diffuse.contents = id == config.selected && config.coloring.feature.isEmpty ? NSColor.systemOrange : colors[id]
                 node.opacity = config.marked.isEmpty || config.marked.contains(id) || id == config.selected ? 1 : 0.2
-                let scale: Float = id == config.selected ? 1.9 : config.marked.contains(id) ? 1.35 : 1
+                let base: Float = surfaceNodes.contains(id) ? config.shapeScale : 1
+                let scale: Float = base * (id == config.selected ? 1.9 : config.marked.contains(id) ? 1.35 : 1)
                 node.scale = SCNVector3(scale, scale, scale)
             }
         }

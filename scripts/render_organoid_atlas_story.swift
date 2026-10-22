@@ -19,6 +19,7 @@ func mix(_ a:SIMD3<Float>,_ b:SIMD3<Float>,_ t:Float)->SIMD3<Float>{a*(1-t)+b*t}
 let base=simd_quatf(angle:0.35,axis:SIMD3(1,0,0))*simd_quatf(angle:-0.45,axis:SIMD3(0,1,0))
 let end=simd_quatf(angle:0.9,axis:SIMD3(0,1,0))*base
 let offset=SIMD3<Float>(0,-20,0)
+let sourceCount=max(1,spec.nodes.filter {$0.source}.count)
 func card(_ item:Item)->SIMD3<Float>{SIMD3(Float(item.query ? 300 : 300+item.match*440)-Float(spec.width)/2,-20,170)}
 func pose(_ item:Item,_ t:Float)->Pose {
     let target=vector(item.target),original=vector(item.organoidPosition)
@@ -32,9 +33,10 @@ func pose(_ item:Item,_ t:Float)->Pose {
         } else if t<3.5 {
             result.p=end.act(original)*(1+0.7*smooth((t-2)/1.5))+offset;result.r=item.organoidRadius;result.q=end
         } else if t<6.5 {
-            let delay=Float(item.sourceOrder)/11*0.6,u=smooth((t-3.5-delay)/2.4)
+            let sourceFraction=Float(item.sourceOrder)/Float(max(1,sourceCount-1))
+            let delay=sourceFraction*0.6,u=smooth((t-3.5-delay)/2.4)
             result.p=mix(end.act(original)*1.7+offset,target,u)
-            result.p.y += sin(u*Float.pi)*(80+Float(item.sourceOrder)*5)
+            result.p.y += sin(u*Float.pi)*(80+sourceFraction*55)
             result.p.z += sin(u*Float.pi)*90
             result.r=item.organoidRadius*(1-u)+item.targetRadius*u;result.q=simd_slerp(end,q,u)
         }
@@ -54,12 +56,13 @@ func pose(_ item:Item,_ t:Float)->Pose {
     if t>=13 {
         if item.source {
             let u=smooth((t-13)/2.2)
-            let start=item.query ? card(item):target
+            let featured=item.query || item.match>0
+            let start=featured ? card(item):target
             result.p=mix(start,base.act(original)+offset,u)
             result.p.y += sin(u*Float.pi)*80
-            result.r=(item.query ? 140:item.targetRadius)*(1-u)+item.organoidRadius*u
-            let initialQ=item.query ? simd_quatf(angle:0.8,axis:SIMD3(0,1,0))*q:q
-            result.q=simd_slerp(initialQ,base,u);result.alpha=item.query ? 1:u
+            result.r=(featured ? 140:item.targetRadius)*(1-u)+item.organoidRadius*u
+            let initialQ=featured ? simd_quatf(angle:0.8,axis:SIMD3(0,1,0))*q:q
+            result.q=simd_slerp(initialQ,base,u);result.alpha=featured ? 1:u
         } else {
             result.p=item.match>0 ? card(item):target
             result.r=item.match>0 ? 140:item.targetRadius

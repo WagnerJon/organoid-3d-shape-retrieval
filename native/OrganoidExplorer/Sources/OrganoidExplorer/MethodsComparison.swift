@@ -6,7 +6,7 @@ struct MethodsComparisonView: View {
     @State private var calculating = false
     @State private var comparisonScope = "Learned shape benchmarks"
     @State private var commonOnly = true
-    private let columns = Array(repeating: GridItem(.flexible(minimum: 240), spacing: 12), count: 3)
+    private let columns = Array(repeating: GridItem(.flexible(minimum: 240), spacing: 12, alignment: .top), count: 3)
     private let benchmarkFamilies: Set<String> = ["allen", "point_mae", "shapeembed3d"]
     private let benchmarkKeys: Set<String> = ["morph_all", "morph_adjusted", "spatial_robust", "spatial_adjusted", "spherical_harmonics", "spherical_harmonics_adjusted",
         "allen_head_decoder_raw", "allen_head_decoder_adjusted", "point_mae_adapted_pose_average_raw", "point_mae_adapted_pose_average_adjusted", "shapeembed3d_invariant_raw", "shapeembed3d_invariant_adjusted"]
@@ -116,7 +116,7 @@ struct MethodsComparisonView: View {
                 ForEach(methods) { Text($0.name).tag($0.id) }
             }.frame(maxWidth: 310)
                 .onChange(of: store.referenceMethod) { store.clusterFilter = -1 }
-            Picker("Color", selection: $store.sharedMethodColors) {
+            Picker("Default group colors", selection: $store.sharedMethodColors) {
                 Text("Reference groups").tag(true)
                 Text("Each method’s groups").tag(false)
             }.pickerStyle(.segmented).labelsHidden().frame(maxWidth: 320)
@@ -131,7 +131,7 @@ struct MethodsComparisonView: View {
             ForEach(0..<6) { i in
                 HStack(spacing: 4) { Circle().fill(clusterColors[i]).frame(width: 7, height: 7); Text("\(i+1)") }
             }
-            Text(store.sharedMethodColors ? "Same colors follow \(referenceName) groups in every plot." : "Colors show each method’s own groups; group numbers are independent.")
+            Text(store.sharedMethodColors ? "Default colors follow \(referenceName) groups. Each plot can override its feature and palette." : "Default colors show each method’s own groups. Each plot can override its feature and palette.")
                 .foregroundStyle(.secondary)
             Spacer(minLength: 0)
             Text("\(store.selection.count) marked").foregroundStyle(.teal)
@@ -140,8 +140,8 @@ struct MethodsComparisonView: View {
     func methodCard(_ method: Method) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             ScatterPanel(methodID: method.id, title: method.name,
-                         colorMethodID: store.sharedMethodColors ? store.referenceMethod : nil, cohortIDs: plotCohortIDs)
-                .frame(height: 234)
+                         colorMethodID: store.sharedMethodColors ? store.referenceMethod : nil, cohortIDs: plotCohortIDs, featureColoring: true)
+                .frame(height: 350)
             if method.id == store.referenceMethod {
                 Label("Reference method", systemImage: "scope").font(.caption2).foregroundStyle(.teal)
             }

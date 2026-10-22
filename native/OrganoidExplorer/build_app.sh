@@ -17,7 +17,7 @@ info = dict(CFBundleExecutable='OrganoidExplorer', CFBundleIdentifier='org.local
             CFBundleName='Organoid Atlas', CFBundleDisplayName='Organoid Atlas',
             CFBundleIconFile='OrganoidAtlas.icns',
             CFBundlePackageType='APPL', CFBundleShortVersionString='0.1.0', CFBundleVersion='1',
-            LSMinimumSystemVersion='14.0', NSHighResolutionCapable=True,
+            NSLocalNetworkUsageDescription='Find paired Atlas workers and transfer microscopy stacks for processing on your local network.', NSBonjourServices=['_atlas-worker._tcp'], LSMinimumSystemVersion='14.0', NSHighResolutionCapable=True,
             ExplorerDatasetPath=sys.argv[2], ExplorerProjectPath=str(Path(sys.argv[2]).parent.parent), NSPrincipalClass='NSApplication')
 (app/'Contents/Info.plist').write_bytes(plistlib.dumps(info))
 PY

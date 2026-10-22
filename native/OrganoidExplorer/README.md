@@ -1,6 +1,73 @@
 # Organoid Atlas — native macOS experiment explorer
 
-A SwiftUI/AppKit application with SceneKit rendering. All experiment data stays on this Mac. No web server, browser shell, model retraining, or hosted inference service is used. Segmentation downloads pretrained weights when needed.
+## Prepare raw images
+
+Choose **New Dataset…** from the opening screen, toolbar or File menu (⌘N).
+Add one or more single-channel Z/Y/X TIFF stacks, confirm each stack's voxel
+spacing in µm, choose Cellpose `cpsam_v2`, `cpdino` or `cpdino-vitb`, and select
+a new results folder. Existing integer label TIFFs can replace segmentation for
+individual stacks. OME and ImageJ calibration are suggested when available;
+missing calibration must be supplied explicitly.
+
+In **New Dataset → Segmentation and comparisons → Try settings on one slice**,
+choose a stack, XY/XZ/YZ plane and slice. **Load raw slice** shows the image;
+**Test segmentation on this slice** runs the current Cellpose settings and shows
+raw microscopy alongside a cell-label overlay with opacity controls. Settings
+remain shared with full dataset preparation, and changing settings marks the
+previous test as stale. Only one test/preparation worker runs at a time; Cancel
+also stops a slice test. No output folder or completed dataset is needed.
+
+The test reads one XY plane, or streams XY pages to extract an XZ/YZ plane;
+it does not load or segment the whole volume. It uses slice-local preprocessing
+with calibrated in-plane scaling and standard Cellpose 2D mask formation.
+It is a settings preview, not a validation of 3D linking: full-volume intensity
+normalization, 3D neighborhood context and u-Segment3D aggregation may differ.
+Preview labels stay in temporary storage and never replace dataset labels.
+
+Preparation runs stacks and segmentation stages sequentially with checkpoints,
+a memory safeguard, progress and cancellation. **Resume saved preparation…**
+restores an interrupted job's settings; completed steps are reused. Choose a new
+folder when changing inputs or settings. Raw TIFFs remain referenced at their
+original paths. Results include calibrated surfaces, review flags, combined
+traditional/size/shape feature plots and optional raw multi-shell harmonic
+features. Detached-cell membership uses the processed segmentation grid, and
+can be reviewed in **Organoid Membership**. This workflow does not train learned
+encoders or automatically run every experimental descriptor.
+
+For multiple Macs, open **Processing Macs → Nearby Macs…** to discover and pair
+Atlas Workers through Bonjour. Choose this Mac, paired workers, or both; Dask
+assigns whole stacks or optional plane batches with one heavy job per device, caches transferred inputs,
+and collects results into one dataset. The separate **Atlas Worker for Mac**
+package includes its own first-run runtime setup. See [worker setup and limits](../../docs/ATLAS_WORKERS.md).
+
+Use **Import OME-Zarr…** in New Dataset for local OME-NGFF 0.4/0.5 directories,
+including 5D TCZYX movies. Choose raw/deconvolved image, channel, pyramid level
+and a zero-based time-point range/stride. Each selected frame becomes an
+independent sample. Optional cell/nucleus instance labels are imported on the
+same grid; lumen semantic masks and GEFF tracks are not treated as cells.
+Slice tests read the selected Zarr plane directly. Preparation copies only the
+selected 3D volumes into calibrated TIFFs inside the results folder, retaining
+selection, original transforms and timestamps. [OME-Zarr details](../../docs/OME_ZARR_IMPORT.md).
+
+The preparation window shows processing-grid and memory estimates and offers a
+lower scale explicitly when whole-volume linking would exceed the planning
+budget. Raw uint8/uint16 TIFF preprocessing streams planes; global intensity
+normalization and physical spacing are retained. Changing scale uses a fresh
+results folder when earlier checkpoints exist; retest the cell diameter.
+
+Select **Open dataset in Atlas** when preparation finishes. Processing artifacts
+and logs remain beside `atlas_dataset/`; only completed exports are opened.
+Requires the existing project Python environment and u-Segment3D installation.
+
+Validation: `tests/test_dataset_preparation.py` exercises two compressed OME
+stacks with existing labels through real surface/QC/descriptor export, physical
+calibration, joint aggregates, detached-cell exclusion, checkpoint recovery,
+single-cell export and protection against changed inputs or unrelated output
+folders. Cellpose inference itself uses the existing checkpointed processing
+pipeline; the workflow test does not run a new biological segmentation benchmark.
+
+
+A SwiftUI/AppKit application with SceneKit rendering. Processing stays local unless you select paired LAN workers. Worker transfers use authenticated HTTPS; no cloud inference or browser shell is used. Segmentation downloads pretrained weights when needed.
 
 ## Open
 
@@ -25,6 +92,7 @@ Requires Apple Silicon macOS 14 or later for the supplied local build. The Swift
 
 The **Compare Methods** tab places traditional morphometry and all five self-supervised representations in a 3×2 PCA grid for either cells or stacks.
 
+- Each plot has independent **Color by** and **Palette** controls for all numeric measurements present in the dataset, including custom fields and organoid cell counts. Available palettes include Viridis, Magma, Inferno, Cividis, Turbo, blue–white–red and grayscale; Atlas group colors remain available in group mode. Feature legends share the same filtered-cohort range across plots. Missing values are gray and constant features use the palette midpoint. Settings follow the same method into full-screen/3D and reconstructed-cell views; changing a 3D palette preserves the camera. Coloring changes display only, with cell and organoid settings kept separately for the session.
 - Select a **Reference** method. **Reference groups** applies that method’s cluster colors to the same objects in every panel; **Each method’s groups** shows independent cluster assignments.
 - Click any plot to link the selected object across all six spaces. Drag a rectangle to mark a set everywhere. The sidebar filters, QC toggle and marked-only view apply to every panel.
 - **Mark nearest 10** highlights the selected object and one method’s full-vector nearest neighbors in every plot. **Inspect in 3D** returns to the reconstruction explorer with the selection intact.
@@ -197,6 +265,12 @@ interpretation and reproducible export/validation instructions.
 ## Full-screen plots and shape discovery
 
 Use a plot's expansion icon or **3 PCs** button for a native full-screen plot with
-linked selection and a 2D/3D switch. **Discover Shape Groups** offers closest-shape
+linked selection and a 2D/3D switch. In cell view, **Cell shapes** replaces points
+with previews of the actual reconstructed surfaces. Each plot loads only its own
+visible cells, with a progress indicator and size control; **Points** releases
+that plot's previews. Shapes use a normalized display size and retain linked
+selection. The expanded 3D view renders rotatable cell surfaces.
+
+**Discover Shape Groups** offers closest-shape
 galleries across methods and automatic full-distance HDBSCAN groups, representative
 shapes, linked cameras and group marking. See [interactive shape guide](../../docs/ATLAS_INTERACTIVE_SHAPES.md).

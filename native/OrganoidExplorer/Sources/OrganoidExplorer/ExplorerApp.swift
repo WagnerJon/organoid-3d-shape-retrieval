@@ -24,6 +24,7 @@ import AppKit
         .defaultSize(width: 1380, height: 790)
         .commands {
             CommandGroup(replacing: .newItem) {
+                Button("New Dataset…") { store.showPreparation = true }.keyboardShortcut("n")
                 Button("Open Experiment…") { store.openPanel() }.keyboardShortcut("o")
                 Button("Export Visible / Marked Rows…") { store.exportSelection() }.keyboardShortcut("e", modifiers: [.command, .shift])
             }
@@ -32,6 +33,7 @@ import AppKit
 }
 
 struct ContentView: View {
+    @StateObject private var preparation = DatasetPreparationStore()
     @StateObject private var segmentation = SegmentationStore()
     @StateObject private var postProcessing = SegmentationStore()
     @EnvironmentObject var store: ExplorerStore
@@ -58,12 +60,16 @@ struct ContentView: View {
                     Label("Your experiments, connected", systemImage: "cube.transparent")
                 } description: {
                     Text("Open a prepared experiment to explore cell morphology, learned representations, raw microscopy and 3D surfaces together.")
-                } actions: { Button("Open Experiment…") { store.openPanel() }.buttonStyle(.borderedProminent) }
+                } actions: {
+                    Button("New Dataset…") { store.showPreparation = true }.buttonStyle(.borderedProminent)
+                    Button("Open Experiment…") { store.openPanel() }
+                }
             }
         }
         .tint(.teal)
         .toolbar {
             ToolbarItemGroup {
+                Button { store.showPreparation = true } label: { Label("New Dataset", systemImage: "plus.square") }
                 Button { store.openPanel() } label: { Label("Open", systemImage: "folder") }
                 Button { store.exportSelection() } label: { Label("Export rows", systemImage: "square.and.arrow.up") }.disabled(store.dataset == nil)
             }
@@ -71,6 +77,11 @@ struct ContentView: View {
         .alert("Unable to complete action", isPresented: Binding(get: { store.error != nil }, set: { if !$0 { store.error = nil } })) {
             Button("OK") { store.error = nil }
         } message: { Text(store.error ?? "") }
+        .sheet(isPresented: $store.showPreparation) {
+            DatasetPreparationView(preparation: preparation, open: { folder in
+                store.showPreparation = false; store.activeTab = "explore"; store.load(folder)
+            }, close: { store.showPreparation = false })
+        }
         .sheet(isPresented: $store.showCompare, onDismiss: { store.shapeComparisonMethodID = nil }) { ComparisonSheet().environmentObject(store) }
     }
     var sidebar: some View {
@@ -105,7 +116,7 @@ struct ContentView: View {
                 TextField("Find a cell or stack", text: $store.search).textFieldStyle(.roundedBorder)
                 Picker("Stack", selection: $store.sampleFilter) {
                     Text("All stacks").tag("All stacks")
-                    ForEach(data.samples) { Text($0.id).tag($0.id) }
+                    ForEach(data.samples) { Text($0.displayName).tag($0.id).help($0.id) }
                 }
                 Toggle("QC-passing only", isOn: $store.qcOnly)
                 if store.level == "Cells" {
@@ -184,35 +195,64 @@ struct ScatterPanel: View {
     var colorMethodID: String? = nil
     var cohortIDs: Set<String>? = nil
     var groupLabels: [String: Int]? = nil
+    var featureColoring = false
     var showActions = true
+    var cellShapes: Binding<Bool>? = nil
+    @State private var localCellShapes = false
+    @State private var shapeSize = 28.0
+    private var shapeMode: Binding<Bool> { cellShapes ?? $localCellShapes }
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .top) {
-                Text(title).font(.headline)
-                Spacer(minLength: 2)
-                if showActions, let method = store.dataset?.methods.first(where: { $0.id == methodID }) {
+            Text(title).font(.headline).lineLimit(2)
+            if showActions {
+                HStack(spacing: 6) {
+                    Button { shapeMode.wrappedValue.toggle() } label: {
+                        Label(shapeMode.wrappedValue ? "Points" : "Cell shapes", systemImage: "cube")
+                            .foregroundStyle(shapeMode.wrappedValue ? Color.teal : Color.secondary)
+                    }.font(.caption).disabled(store.level != "Cells" || store.folder == nil)
+                        .accessibilityLabel(shapeMode.wrappedValue ? "Show points in this plot" : "Show cell reconstructions in this plot")
+                        .help("Replace points with cell surfaces in this plot only. Press again to return to points.")
+                if let method = store.dataset?.methods.first(where: { $0.id == methodID }) {
                     Button {
-                        PlotWindows.shared.open(method: method, store: store, cohort: cohortIDs, groups: groupLabels, colorMethod: colorMethodID)
+                        PlotWindows.shared.open(method: method, store: store, cohort: cohortIDs, groups: groupLabels, colorMethod: colorMethodID, featureColoring: featureColoring)
                     } label: { Image(systemName: "arrow.up.left.and.arrow.down.right") }
                         .help("Open this plot full screen")
                     Button(["precomputed", "shape_hybrid95"].contains(method.metric) ? "3D" : "3 PCs") {
-                        PlotWindows.shared.open(method: method, store: store, threeD: true, cohort: cohortIDs, groups: groupLabels, colorMethod: colorMethodID)
+                        PlotWindows.shared.open(method: method, store: store, threeD: true, cohort: cohortIDs, groups: groupLabels, colorMethod: colorMethodID, featureColoring: featureColoring)
                     }.help("Open a rotatable three-axis plot")
                 }
+                Spacer(minLength: 0)
+                }
+            }
+            if featureColoring {
+                let domain = store.filtered.filter { cohortIDs?.contains($0.id) ?? true }
+                PlotColorControls(settings: store.plotColorBinding(methodID), features: plotFeatureKeys(store.allItems),
+                                  map: PlotColorMap(settings: store.plotColors(methodID), items: domain))
             }
             if let method = store.dataset?.methods.first(where: { $0.id == methodID }) {
                 let variance = store.level == "Cells" ? method.variance : method.stackVariance
                 Text(method.projection == "mds" ? "Distance map · \(Int(variance.reduce(0,+)*100))% positive inertia · up to 6 groups" : "PCA · \(Int(variance.reduce(0,+)*100))% variance · up to 6 groups").font(.caption2).foregroundStyle(.secondary)
             }
-            ScatterCanvas(methodID: methodID, colorMethodID: colorMethodID, cohortIDs: cohortIDs, groupLabels: groupLabels)
+            if shapeMode.wrappedValue && store.level == "Cells" {
+                HStack {
+                    Text("Shape size").font(.caption2).foregroundStyle(.secondary)
+                    Slider(value: $shapeSize, in: 14...60).frame(maxWidth: 120)
+                        .accessibilityLabel("Cell surface size in this plot")
+                }
+            }
+            ScatterCanvas(methodID: methodID, colorMethodID: colorMethodID, cohortIDs: cohortIDs, groupLabels: groupLabels,
+                          cellShapes: shapeMode.wrappedValue && store.level == "Cells", shapeSize: shapeSize,
+                          coloring: featureColoring ? store.plotColors(methodID) : PlotColorSettings())
             HStack { Text(store.dataset?.methods.first(where: { $0.id == methodID })?.projection == "mds" ? "Axis 2 ↑" : "PC 2 ↑"); Spacer(); Text(store.dataset?.methods.first(where: { $0.id == methodID })?.projection == "mds" ? "Axis 1 →" : "PC 1 →") }.font(.caption2).foregroundStyle(.secondary)
         }.padding(12).background(.background, in: RoundedRectangle(cornerRadius: 10)).overlay(RoundedRectangle(cornerRadius: 10).stroke(.quaternary))
+            .onChange(of: store.level) { if store.level != "Cells" { shapeMode.wrappedValue = false } }
     }
 }
 struct PlotDot {
     let id: String
     let position: CGPoint
     let cluster: Int
+    var featureValue: Double? = nil
 }
 struct ScatterCanvas: View {
     @EnvironmentObject var store: ExplorerStore
@@ -220,12 +260,19 @@ struct ScatterCanvas: View {
     var colorMethodID: String? = nil
     var cohortIDs: Set<String>? = nil
     var groupLabels: [String: Int]? = nil
+    var cellShapes = false
+    var shapeSize = 28.0
+    var coloring = PlotColorSettings()
+    @StateObject private var assets = PlotCellAssets()
     @State private var dragStart: CGPoint?
     @State private var dragEnd: CGPoint?
     var body: some View {
-        GeometryReader { geo in
-            let dots = makeDots(size: geo.size)
-            Canvas { context, size in draw(context: &context, size: size, dots: dots) }
+        VStack(spacing: 3) {
+            if cellShapes { PlotCellLoadStatus(assets: assets, compact: true) }
+            GeometryReader { geo in
+                let dots = makeDots(size: geo.size)
+                let map = PlotColorMap(settings: coloring, items: store.filtered.filter { cohortIDs?.contains($0.id) ?? true })
+                Canvas { context, size in draw(context: &context, size: size, dots: dots, map: map) }
                 .contentShape(Rectangle())
                 .gesture(DragGesture(minimumDistance: 0).onChanged { value in
                     dragStart = value.startLocation; dragEnd = value.location
@@ -233,10 +280,19 @@ struct ScatterCanvas: View {
                     finish(start: value.startLocation, end: value.location, dots: dots)
                     dragStart = nil; dragEnd = nil
                 })
+            }
         }
+        .task(id: PlotCellAssets.requestKey(enabled: cellShapes, folder: store.folder, items: plotItems)) {
+            guard cellShapes, store.level == "Cells", let folder = store.folder else { assets.clear(); return }
+            await assets.load(folder: folder, items: plotItems, mode: .thumbnails)
+        }
+        .onDisappear { assets.clear() }
+    }
+    var plotItems: [Specimen] {
+        store.filtered.filter { $0.representations[methodID] != nil && (cohortIDs?.contains($0.id) ?? true) }
     }
     func makeDots(size: CGSize) -> [PlotDot] {
-        let items = store.filtered.filter { $0.representations[methodID] != nil && (cohortIDs?.contains($0.id) ?? true) }
+        let items = plotItems
         let points = items.map { $0.representations[methodID]!.point }
         let xs = points.map { $0[0] }, ys = points.map { $0[1] }
         let xmin = xs.min() ?? 0, xmax = xs.max() ?? 1
@@ -246,10 +302,10 @@ struct ScatterCanvas: View {
             let x = 18 + (points[i][0]-xmin)/max(xmax-xmin, 1e-9)*width
             let y = Double(size.height)-18-(points[i][1]-ymin)/max(ymax-ymin, 1e-9)*height
             let cluster = groupLabels.map { $0[items[i].id] ?? -1 } ?? items[i].representations[colorMethodID ?? methodID]?.cluster ?? -1
-            return PlotDot(id: items[i].id, position: CGPoint(x:x,y:y), cluster: cluster)
+            return PlotDot(id: items[i].id, position: CGPoint(x:x,y:y), cluster: cluster, featureValue: plotFeatureValue(items[i], key: coloring.feature))
         }
     }
-    func draw(context: inout GraphicsContext, size: CGSize, dots: [PlotDot]) {
+    func draw(context: inout GraphicsContext, size: CGSize, dots: [PlotDot], map: PlotColorMap) {
         for n in 0...4 {
             let y = 18 + CGFloat(n)/4*(size.height-36)
             var line = Path(); line.move(to: CGPoint(x:18,y:y)); line.addLine(to: CGPoint(x:size.width-18,y:y))
@@ -260,9 +316,22 @@ struct ScatterCanvas: View {
             let radius: CGFloat = selected ? 6.5 : (marked ? 4.5 : 3.2)
             let p = dot.position
             let rect = CGRect(x:p.x-radius,y:p.y-radius,width:radius*2,height:radius*2)
-            let color: Color = dot.cluster < 0 ? .gray : clusterColors[dot.cluster % 6]
+            let color = Color(map.color(value: dot.featureValue, group: dot.cluster))
+            let selectionColor = coloring.feature.isEmpty ? Color.orange : color
             let opacity = store.selection.isEmpty || marked ? 0.85 : 0.18
-            context.fill(Path(ellipseIn: rect), with: .color(selected ? .orange : color.opacity(opacity)))
+            if cellShapes, let image = assets.thumbnails[dot.id] {
+                let edge = CGFloat(shapeSize) * (selected ? 1.25 : marked ? 1.1 : 1)
+                let imageRect = CGRect(x:p.x-edge/2, y:p.y-edge/2, width:edge, height:edge)
+                var surfaceContext = context
+                surfaceContext.opacity = selected ? 1 : opacity
+                surfaceContext.addFilter(.colorMultiply(selected ? selectionColor : color))
+                surfaceContext.draw(Image(nsImage: image), in: imageRect)
+                if selected || marked {
+                    context.stroke(Path(roundedRect: imageRect, cornerRadius: 4), with: .color(selected ? .orange : .teal), lineWidth: 1.5)
+                }
+                continue
+            }
+            context.fill(Path(ellipseIn: rect), with: .color(selected ? selectionColor : color.opacity(opacity)))
             if selected || marked {
                 context.stroke(Path(ellipseIn: rect.insetBy(dx:-2,dy:-2)), with: .color(selected ? .primary : .teal), lineWidth: selected ? 2 : 1)
             }
@@ -279,7 +348,7 @@ struct ScatterCanvas: View {
     func finish(start: CGPoint, end: CGPoint, dots: [PlotDot]) {
         func distance(_ dot: PlotDot) -> CGFloat { hypot(dot.position.x-end.x,dot.position.y-end.y) }
         if hypot(start.x-end.x,start.y-end.y) < 5 {
-            if let dot = dots.min(by: { distance($0) < distance($1) }), distance(dot) < 15 {
+            if let dot = dots.min(by: { distance($0) < distance($1) }), distance(dot) < (cellShapes ? max(15, CGFloat(shapeSize)/2) : 15) {
                 store.markPlotItems([dot.id]); store.select(dot.id)
             } else { store.markPlotItems([]) }
         } else {

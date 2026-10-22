@@ -40,6 +40,8 @@ struct Sample: Codable, Identifiable {
     let rawAvailable: Bool
     let sourceImage, sourceLabels: String
     let meshCount: Int
+    var name: String? = nil
+    var displayName: String { name ?? id }
 }
 struct Dataset: Codable {
     let version: Int
@@ -207,6 +209,7 @@ struct VolumeData {
     @Published var activeTab = "explore"
     @Published var referenceMethod = "traditional"
     @Published var sharedMethodColors = true
+    @Published var plotColorSettings: [String: PlotColorSettings] = [:]
     @Published var selectedID: String?
     @Published var method = "simclr3d_raw_isolated"
     @Published var search = ""
@@ -234,6 +237,7 @@ struct VolumeData {
     @Published var volume: VolumeData?
     @Published var volumeError: String?
     @Published var compared: Specimen?
+    @Published var showPreparation = false
     @Published var showCompare = false
     @Published var shapeComparisonMethodID: String?
     @Published var cameraReset = 0

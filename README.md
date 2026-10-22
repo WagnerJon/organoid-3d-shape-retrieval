@@ -41,6 +41,10 @@ Blue: query. Orange: each method’s nearest segmented cell, aligned for display
 
 Example viewer screenshot; plot groups are exploratory, not biological classes.
 
+## Segmentation across Macs
+
+Use a second Apple Silicon Mac as an **Atlas Worker** on the same network. Pair it once through **New Dataset → Processing Macs → Nearby Macs…**; Bonjour discovers workers and Dask distributes whole stacks or Cellpose plane batches from one large stack. Each Mac processes one job at a time, and Atlas collects the results into one dataset. In batch mode, preprocessing and whole-volume u-Segment3D linking still run on the main Mac; RAM is not pooled. [Setup and limits](docs/ATLAS_WORKERS.md).
+
 [Reproduce the pipeline](docs/REPRODUCIBILITY.md) · [Original experiment report](docs/REPORT.md) · [Data and artifacts](docs/DATA.md) · [Full-data representations](docs/ATLAS_FULL_DATA_SHAPES.md)
 
 Code, configurations, tests and selected figures are included. Raw stacks, masks, model weights and large outputs stay outside the repository. Physical calibration is inferred; independent biological specimen identities are unavailable.

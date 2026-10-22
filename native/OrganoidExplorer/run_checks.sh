@@ -11,17 +11,33 @@ elif [[ "${1:-}" == "--slices" ]]; then
     CHECK_ENTRY="$PACKAGE_DIR/Checks/SliceCacheWorker.swift"
 elif [[ "${1:-}" == "--shapes" ]]; then
     CHECK_ENTRY="$PACKAGE_DIR/Checks/InteractiveShapeWorker.swift"
+elif [[ "${1:-}" == "--workers" ]]; then
+    CHECK_ENTRY="$PACKAGE_DIR/Checks/WorkerDiscovery.swift"
+elif [[ "${1:-}" == "--ome-zarr" ]]; then
+    CHECK_ENTRY="$PACKAGE_DIR/Checks/OMEZarrWorker.swift"
+elif [[ "${1:-}" == "--prepare" ]]; then
+    CHECK_ENTRY="$PACKAGE_DIR/Checks/PreparationWorker.swift"
+elif [[ "${1:-}" == "--plot-colors" ]]; then
+    CHECK_ENTRY="$PACKAGE_DIR/Checks/PlotColorWorker.swift"
+elif [[ "${1:-}" == "--plot-cells" ]]; then
+    CHECK_ENTRY="$PACKAGE_DIR/Checks/PlotCellSurfaceWorker.swift"
 fi
 swiftc -O -whole-module-optimization "${COMPILER_FLAGS[@]}" \
     "$PACKAGE_DIR/Sources/OrganoidExplorer/SliceCache.swift" \
     "$PACKAGE_DIR/Sources/OrganoidExplorer/Model.swift" \
+    "$PACKAGE_DIR/Sources/OrganoidExplorer/PlotColoring.swift" \
     "$PACKAGE_DIR/Sources/OrganoidExplorer/ComparisonMetrics.swift" \
     "$PACKAGE_DIR/Sources/OrganoidExplorer/ShapeAnalysis.swift" \
     "$PACKAGE_DIR/Sources/OrganoidExplorer/PointCloud.swift" \
     "$PACKAGE_DIR/Sources/OrganoidExplorer/SceneViewer.swift" \
+    "$PACKAGE_DIR/Sources/OrganoidExplorer/PlotCellSurfaces.swift" \
     "$PACKAGE_DIR/Sources/OrganoidExplorer/PansegSettings.swift" \
     "$PACKAGE_DIR/Sources/OrganoidExplorer/FocusSettings.swift" \
     "$PACKAGE_DIR/Sources/OrganoidExplorer/CellposeSettings.swift" \
+    "$PACKAGE_DIR/Sources/OrganoidExplorer/AtlasWorkers.swift" \
+    "$PACKAGE_DIR/Sources/OrganoidExplorer/DatasetPreparation.swift" \
+    "$PACKAGE_DIR/Sources/OrganoidExplorer/OMEZarrImport.swift" \
+    "$PACKAGE_DIR/Sources/OrganoidExplorer/DatasetSliceTest.swift" \
     "$PACKAGE_DIR/Sources/OrganoidExplorer/Refinement.swift" \
     "$PACKAGE_DIR/Sources/OrganoidExplorer/Segmentation.swift" \
     "$CHECK_ENTRY" -o "$PROJECT_ROOT/.cache/explorer-direct/checks"

@@ -68,3 +68,11 @@ trimesh==5.1.0
 typing_extensions==4.16.0
 xyzservices==2026.9.1
 zict==3.0.0
+
+# OME-NGFF v0.4/v0.5 reader, compatible with the pinned NumPy 1.26 runtime.
+zarr==3.0.10
+numcodecs==0.15.1
+donfig==0.8.1.post1
+crc32c==2.9.post0
+deprecated==3.0.0
+wrapt==2.5.1
