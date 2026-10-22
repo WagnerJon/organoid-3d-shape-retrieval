@@ -77,7 +77,7 @@ struct OMEZarrImportView: View {
                 if let spacing = grid.spacing {
                     Text("Voxel spacing Z/Y/X: \(spacing.map { String(format: "%.4g", $0) }.joined(separator: " / ")) µm. Lower resolution levels have larger voxels and less detail.")
                         .font(.caption).foregroundStyle(.secondary)
-                } else { Text("Physical units are missing or unsupported. Enter voxel spacing after adding the volumes.").font(.caption).foregroundStyle(.orange) }
+                } else { Text("Physical calibration is missing or unsupported. Voxel spacing will default to 1 × 1 × 1 µm; edit it after adding the volumes if known.").font(.caption).foregroundStyle(.orange) }
                 GroupBox("Time points · zero-based indices") {
                     VStack(alignment: .leading, spacing: 8) {
                         Stepper("First: \(first)", value: $first, in: 0...max(0,image.timepoints-1))

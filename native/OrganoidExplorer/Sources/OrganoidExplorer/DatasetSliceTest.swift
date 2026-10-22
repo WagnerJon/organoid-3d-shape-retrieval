@@ -33,7 +33,7 @@ struct DatasetSliceTestView: View {
         GroupBox("Try settings on one slice") {
             VStack(alignment: .leading, spacing: 8) {
                 if preparation.inputs.isEmpty {
-                    Text("Add a TIFF or OME-Zarr volume above to test segmentation before preparing the dataset.").font(.caption).foregroundStyle(.secondary)
+                    Text("Add a TIFF, NumPy or OME-Zarr volume above to test segmentation before preparing the dataset.").font(.caption).foregroundStyle(.secondary)
                 } else {
                     HStack {
                         Picker("Stack", selection: $selectedPath) {

@@ -41,7 +41,7 @@ def main():
     checked=sorted({0,cfg['nativeShape'][0]//4,cfg['nativeShape'][0]//2,3*cfg['nativeShape'][0]//4,cfg['nativeShape'][0]-1})
     with tifffile.TiffFile(p/'labels_native.ome.tif') as t:
         assert t.series[0].shape==tuple(cfg['nativeShape']) and t.is_ome and t.series[0].dtype==np.uint32
-        for z in checked:np.testing.assert_array_equal(t.pages[z].asarray(),native_plane(labels,cfg['nativeShape'],z))
+        for z in checked:np.testing.assert_array_equal(t.pages[z].asarray(),native_plane(labels,cfg['nativeShape'],z,json.loads((p/'processing.json').read_text()).get('resamplingZoomZYX')))
     result=dict(predictedObjects=len(rows),objectsRequiringReview=len(flagged),flagCounts=counts,flaggedObjects=flagged,
         tinyFragmentThreshold='100 processed voxels (about 100 cubic micrometers); an operational review flag, not a biological size cutoff',
         segmentationLabelsUnchanged=True,excludedObjects=0,nativeGridValidationPlanes=checked,

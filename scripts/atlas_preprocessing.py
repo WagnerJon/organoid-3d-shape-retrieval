@@ -9,36 +9,40 @@ BYTES_PER_VOXEL = 256
 RUNTIME_BYTES = 1.25*GIB
 
 
-def memory_plan(shape, spacing, scale, total_bytes=None):
+def memory_plan(shape, spacing, scale, total_bytes=None, linking_mode='standard'):
     if len(shape) != 3 or len(spacing) != 3 or not all(math.isfinite(float(x)) and x > 0 for x in [*shape,*spacing,scale]):
         raise ValueError('Positive finite Z/Y/X dimensions, spacing and scale required')
     if total_bytes is None:
         import psutil
         total_bytes = psutil.virtual_memory().total
     minimum = min(spacing)
+    if linking_mode not in ('standard','streamed'):raise ValueError('Unknown linking mode')
+    allowance=48 if linking_mode=='streamed' else BYTES_PER_VOXEL
     processed = tuple(math.floor(n*(scale*(s/minimum))) for n,s in zip(shape,spacing))
     voxels = math.prod(processed)
     budget = min(11.5*GIB, .65*total_bytes)
-    peak = RUNTIME_BYTES+BYTES_PER_VOXEL*voxels
+    peak = RUNTIME_BYTES+allowance*voxels
     valid = min(processed) >= 2 and peak <= budget
     suggested = None
     for step in range(min(100,math.floor(scale*100)),4,-1):
         candidate=step/100
         dims=[math.floor(n*(candidate*(s/minimum))) for n,s in zip(shape,spacing)]
-        if min(dims)>=2 and RUNTIME_BYTES+BYTES_PER_VOXEL*math.prod(dims)<=budget:
+        if min(dims)>=2 and RUNTIME_BYTES+allowance*math.prod(dims)<=budget:
             suggested=candidate;break
     return dict(processedShape=list(processed),singleArrayGiB=voxels*4/GIB,
-                estimatedPeakGiB=peak/GIB,budgetGiB=budget/GIB,fits=valid,suggestedScale=suggested)
+                estimatedPeakGiB=peak/GIB,budgetGiB=budget/GIB,fits=valid,suggestedScale=suggested,
+                linkingMode=linking_mode,estimatedDiskGiB=(144*voxels+4*math.prod(shape)+GIB)/GIB,
+                linkingScratchGiB=24*voxels/GIB)
 
 
-def check_memory(shape,spacing,scale,total_bytes=None):
-    plan=memory_plan(shape,spacing,scale,total_bytes)
+def check_memory(shape,spacing,scale,total_bytes=None,linking_mode='standard'):
+    plan=memory_plan(shape,spacing,scale,total_bytes,linking_mode)
     if not plan['fits']:
         suggestion=(f"Try processing scale {plan['suggestedScale']:.2f} or lower and test the cell diameter again. Choose a new results folder when changing scale."
                     if plan['suggestedScale'] is not None else 'Use a crop or a machine with more memory.')
         raise ValueError(f"Processing scale {scale:g} produces Z/Y/X {' × '.join(map(str,plan['processedShape']))}; one float32 image alone is {plan['singleArrayGiB']:.1f} GiB. "
-                         f"The conservative whole-volume linking estimate is {plan['estimatedPeakGiB']:.1f} GiB (planning budget {plan['budgetGiB']:.1f} GiB). "
-                         f"Distributed Cellpose batches do not split preprocessing or final 3D linking. {suggestion} Raw data are unchanged.")
+                         f"The conservative processing memory estimate is {plan['estimatedPeakGiB']:.1f} GiB (planning budget {plan['budgetGiB']:.1f} GiB). "
+                         f"Memory-saving linking still requires RAM for preprocessing, image planes and exports. Distributed batches do not pool RAM. {suggestion} Raw data are unchanged.")
     return plan
 
 

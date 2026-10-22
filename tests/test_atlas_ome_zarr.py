@@ -53,6 +53,19 @@ class OMEZarrTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError,'semantic'):selection_entry(image,0,0,0,'lumen')
                 with self.assertRaisesRegex(ValueError,'channel'):selection_entry(image,3,0,0)
 
+    def test_missing_calibration_defaults_to_unit_voxels(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);path,data,_,_=self.fixture(root,units='')
+            image=inspect_store(path)
+            self.assertIsNone(image['levels'][0]['spacing'])
+            entry=selection_entry(image,0,0,0)
+            self.assertEqual(entry['spacing'],[1.,1.,1.])
+            self.assertIn('default 1 × 1 × 1',entry['calibrationSource'])
+            converted=materialize(entry,root/'unit-default')
+            from prepare_atlas_dataset import inspect
+            self.assertEqual(inspect(converted['path'])['spacing'],[1.,1.,1.])
+            np.testing.assert_array_equal(tifffile.imread(converted['path']),data[0,0])
+
     def test_axis_metadata_controls_slicing(self):
         with tempfile.TemporaryDirectory() as tmp:
             path,data,_,axes=self.fixture(Path(tmp),permuted=True);e=selection_entry(inspect_store(path),1,1,0)

@@ -28,7 +28,7 @@ PROTOCOL = 1
 HEX = re.compile(r'^[a-f0-9]{64}$')
 ARTIFACTS = ['run.json','processing.json','aggregation.json','summary.json','complete.json','qc_summary.json','prob.npy','flow.npy','batch.completed.json',
              'cell_measurements.csv','cell_measurements_pipeline.csv','labels_processed.npy','labels_processed.ome.tif',
-             'labels_native.ome.tif','preview.png','QUALITY_CONTROL.md','README.md','meshes','logs']
+             'labels_native.ome.tif','preview.png','QUALITY_CONTROL.md','README.md','meshes','logs','streamed_linking']
 
 
 def sha(path):
@@ -55,7 +55,7 @@ def compute_slot():
 
 def engine():
     from importlib.metadata import version,PackageNotFoundError
-    files=['run_standalone_cellpose.py','qc_standalone_cellpose.py','prepare_atlas_dataset.py','atlas_worker.py','atlas_inference_batches.py','atlas_preprocessing.py','atlas_ome_zarr.py']
+    files=['run_standalone_cellpose.py','qc_standalone_cellpose.py','prepare_atlas_dataset.py','atlas_worker.py','atlas_inference_batches.py','atlas_preprocessing.py','atlas_ome_zarr.py','atlas_numpy.py','atlas_streamed_linking.py','atlas_streaming_core.py']
     h=hashlib.sha256()
     for name in files:h.update((name+sha(ROOT/'scripts'/name)).encode())
     for path in sorted((ROOT/'vendor/u-segment3D/segment3D').rglob('*.py')):
@@ -135,6 +135,8 @@ class WorkerState:
         if len(spacing)!=3 or not all(isinstance(x,(int,float)) and isfinite(x) and x>0 for x in spacing):raise ValueError('Invalid spacing')
         if settings.get('model') not in ('cpsam_v2','cpdino','cpdino-vitb') or not .05<=float(settings['scale'])<=1 or not 2<=float(settings['diameter'])<=500:raise ValueError('Invalid segmentation settings')
         if type(settings.get('gpu')) is not bool or type(settings.get('background')) is not bool:raise ValueError('Invalid device/background settings')
+        from atlas_streamed_linking import validate_mode
+        validate_mode(settings.get('linkingMode'))
         identity=dict(spec=spec,compatibility=self.compatibility,owner=owner)
         job_id=hashlib.sha256(json.dumps(identity,sort_keys=True).encode()).hexdigest()
         with self.lock:
@@ -260,7 +262,8 @@ class Handler(BaseHTTPRequestHandler):
                 if self.command=='GET':
                     status=folder/'run/status.json'
                     if saved['status']=='running' and status.exists():
-                        with contextlib.suppress(ValueError):saved.update(stage=json.loads(status.read_text()).get('stage',saved['stage']))
+                        with contextlib.suppress(ValueError):
+                            detail=json.loads(status.read_text());saved.update(stage=detail.get('stage',saved['stage']),fraction=detail.get('taskFraction',0))
                     saved.pop('owner',None);return self.respond(200,saved)
             if len(parts)==3 and parts[2]=='result' and self.command=='GET' and saved['status']=='complete':
                 path=folder/'result.tar.gz';self.send_response(200);self.send_header('Content-Length',str(path.stat().st_size));self.send_header('X-Atlas-SHA256',saved['archiveSHA256']);self.end_headers()

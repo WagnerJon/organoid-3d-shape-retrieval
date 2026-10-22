@@ -52,6 +52,14 @@ class PreparationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'single-channel'):
             inspect(path)
 
+    def test_missing_calibration_defaults_to_unit_voxels(self):
+        path=self.root/'uncalibrated.tif'
+        tifffile.imwrite(path,np.zeros((3,4,5),np.uint16),metadata={'axes':'ZYX'},photometric='minisblack')
+        metadata=inspect(path)
+        self.assertEqual(metadata['spacing'],[1.,1.,1.])
+        self.assertIn('default 1 × 1 × 1',metadata['calibrationSource'])
+        self.assertEqual(inspect(self.entries[0]['path'])['spacing'],[2.,.5,.5])
+
     def test_joint_dataset_geometry_measurements_and_exclusions(self):
         data = self.data
         self.assertEqual(len(data['cells']),6)

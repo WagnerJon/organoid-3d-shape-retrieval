@@ -47,13 +47,20 @@ def setup(args):
     from importlib.metadata import version,PackageNotFoundError
     folder=args.output.resolve();source=args.input.resolve();meta=calibration(source, getattr(args, "spacing", None))
     core=dict(source=str(source),sourceStat=source_stat(source),scale=args.scale,diameterProcessedPx=args.diameter,model=getattr(args,'model','cpsam_v2'),gpu=not getattr(args,'cpu',False),backgroundCorrection=not getattr(args,'no_background',False),binaryFillHoles=False,gradientDecay=.05,**meta)
+    from atlas_streamed_linking import validate_mode,check_space
+    mode=validate_mode(getattr(args,'linking_mode','standard'))
+    if mode=='streamed':core['linkingMode']=mode
     if not (folder/'aggregate.completed.json').exists():
         from atlas_preprocessing import check_memory
-        check_memory(meta['nativeShape'],meta['spacingZYXum'],args.scale)
+        plan=check_memory(meta['nativeShape'],meta['spacingZYXum'],args.scale,linking_mode=mode)
+        if mode=='streamed':
+            cached=sum(p.stat().st_size for p in folder.rglob('*') if p.is_file() and not p.is_symlink()) if (folder/'run.json').exists() else 0
+            check_space(folder,max(0,plan['estimatedDiskGiB']*2**30-cached),'Dataset preparation')
     folder.mkdir(parents=True,exist_ok=True)
     p=folder/'run.json'
     if p.exists():
-        current=json.loads(p.read_text());assert all(current[k]==v for k,v in core.items()),'Output folder belongs to different settings or source'
+        current=json.loads(p.read_text());assert all(current.get(k)==v for k,v in core.items()),'Output folder belongs to different settings or source'
+        assert current.get('linkingMode','standard')==mode,'Output folder belongs to a different linking mode'
         return current
     if list(folder.iterdir()):raise ValueError('Refusing to reuse a nonempty, unrecognized output folder')
     runtime={}
@@ -61,7 +68,7 @@ def setup(args):
         try:runtime[name]=version(name)
         except PackageNotFoundError:pass
     config=dict(**core,sourceSHA256=digest(source),checkpointSHA256=digest(ROOT/'.cache/cellpose'/core['model']) if (ROOT/'.cache/cellpose'/core['model']).is_file() else 'Downloaded by Cellpose on first inference',runtime=runtime,
-                scriptSHA256=digest(__file__),created=time.strftime('%Y-%m-%dT%H:%M:%S%z'),execution='Separate processes; sequential views; whole-volume aggregation; no Atlas changes')
+                scriptSHA256=digest(__file__),created=time.strftime('%Y-%m-%dT%H:%M:%S%z'),execution='Separate processes; sequential views; '+('disk-backed fine-grid linking' if mode=='streamed' else 'whole-volume aggregation'))
     save(p,config);(folder/'logs').mkdir();(folder/'predictions').mkdir();(folder/'script_snapshot.py').write_bytes(Path(__file__).read_bytes())
     (folder/'README.md').write_text(f'''# Standalone Cellpose + u-Segment3D analysis
 
@@ -87,12 +94,13 @@ def save_array(p,a):
     import numpy as np
     tmp=p.with_name(p.stem+'.tmp.npy');np.save(tmp,a);tmp.replace(p)
 
-def native_plane(labels,native_shape,z):
+def native_plane(labels,native_shape,z,zoom=None):
     import numpy as np
     # Pixel-center nearest-neighbor mapping, matching skimage resize(order=0).
-    iz=min(labels.shape[0]-1,int((z+.5)*labels.shape[0]/native_shape[0]))
-    iy=np.minimum(labels.shape[1]-1,((np.arange(native_shape[1])+.5)*labels.shape[1]/native_shape[1]).astype(int))
-    ix=np.minimum(labels.shape[2]-1,((np.arange(native_shape[2])+.5)*labels.shape[2]/native_shape[2]).astype(int))
+    factors=np.asarray(zoom) if zoom is not None else np.asarray(labels.shape)/native_shape
+    iz=min(labels.shape[0]-1,int((z+.5)*factors[0]))
+    iy=np.minimum(labels.shape[1]-1,((np.arange(native_shape[1])+.5)*factors[1]).astype(int))
+    ix=np.minimum(labels.shape[2]-1,((np.arange(native_shape[2])+.5)*factors[2]).astype(int))
     return labels[iz][iy[:,None],ix[None,:]]
 
 def worker(folder,stage):
@@ -107,7 +115,7 @@ def worker(folder,stage):
         pre=parameters.get_preprocess_params();spacing=np.array(cfg['spacingZYXum'])
         pre.update(factor=cfg['scale'],voxel_res=(spacing/spacing.min()).tolist(),do_bg_correction=cfg['backgroundCorrection'],bg_ds=8)
         from atlas_preprocessing import check_memory,preprocess
-        plan=check_memory(cfg['nativeShape'],cfg['spacingZYXum'],cfg['scale'])
+        plan=check_memory(cfg['nativeShape'],cfg['spacingZYXum'],cfg['scale'],linking_mode=cfg.get('linkingMode','standard'))
         print('Preprocessing',cfg['nativeShape'],'spacing',spacing,'scale',cfg['scale'],flush=True)
         if cfg['dtype'] in ('uint8','uint16'):
             streamed=preprocess(cfg['source'],folder,pre,lambda line:print(line,flush=True))
@@ -119,32 +127,43 @@ def worker(folder,stage):
             save_array(folder/'processed.npy',processed)
             streamed=dict(mode='Original u-Segment3D preprocessing (non-uint8/uint16 input)')
         assert processed.ndim==3 and finite(processed)
-        details=dict(processedShape=list(processed.shape),effectiveSpacingZYXum=(np.array(cfg['nativeShape'])*spacing/np.array(processed.shape)).tolist(),parameters=pre,memoryPlan=plan,preprocessing=streamed)
+        zoom=pre['factor']*np.asarray(pre['voxel_res']);actual_spacing=spacing/zoom
+        details=dict(processedShape=list(processed.shape),effectiveSpacingZYXum=actual_spacing.tolist(),resamplingZoomZYX=zoom.tolist(),rawGridOffsetZYXum=((actual_spacing-spacing)/2).tolist(),parameters=pre,memoryPlan=plan,preprocessing=streamed)
         save(folder/'processing.json',details)
     elif stage in ['xy','xz','yz']:
         import torch
-        from segment3D import parameters,usegment3d
+        from segment3D import parameters
         use_gpu=cfg.get('gpu',True) and (torch.backends.mps.is_available() or torch.cuda.is_available())
-        processed=np.load(folder/'processed.npy',mmap_mode='r');cp=parameters.get_Cellpose_autotune_params()
-        cp.update(cellpose_modelname=cfg['model'],gpu=use_gpu,best_diam=cfg['diameterProcessedPx'],debug_viz=False)
-        print('Running Cellpose',stage,'processed shape',processed.shape,'diameter',cfg['diameterProcessedPx'],'MPS available',torch.backends.mps.is_available(),flush=True)
-        auto,prob,flow,styles=usegment3d.Cellpose2D_model_auto(processed[...,None],stage,cp)
-        assert prob.shape==processed.shape and flow.shape==(2,)+processed.shape
-        assert finite(prob) and finite(flow)
-        save_array(folder/'predictions'/f'{stage}_prob.npy',prob.astype(np.float32,copy=False));save_array(folder/'predictions'/f'{stage}_flow.npy',flow.astype(np.float32,copy=False))
-        details=dict(view=stage,shape=list(prob.shape),parameters=cp,device='GPU' if use_gpu else 'CPU')
+        if cfg.get('linkingMode')=='streamed':
+            from atlas_streamed_linking import infer_view
+            details=infer_view(folder,stage,dict(model=cfg['model'],gpu=use_gpu,diameter=cfg['diameterProcessedPx']))
+        else:
+            from segment3D import usegment3d
+            processed=np.load(folder/'processed.npy',mmap_mode='r');cp=parameters.get_Cellpose_autotune_params()
+            cp.update(cellpose_modelname=cfg['model'],gpu=use_gpu,best_diam=cfg['diameterProcessedPx'],debug_viz=False)
+            print('Running Cellpose',stage,'processed shape',processed.shape,'diameter',cfg['diameterProcessedPx'],'MPS available',torch.backends.mps.is_available(),flush=True)
+            auto,prob,flow,styles=usegment3d.Cellpose2D_model_auto(processed[...,None],stage,cp)
+            assert prob.shape==processed.shape and flow.shape==(2,)+processed.shape
+            assert finite(prob) and finite(flow)
+            save_array(folder/'predictions'/f'{stage}_prob.npy',prob.astype(np.float32,copy=False));save_array(folder/'predictions'/f'{stage}_flow.npy',flow.astype(np.float32,copy=False))
+            details=dict(view=stage,shape=list(prob.shape),parameters=cp,device='GPU' if use_gpu else 'CPU')
     elif stage=='aggregate':
-        from segment3D import parameters,usegment3d
-        probs=[np.load(folder/'predictions'/f'{v}_prob.npy',mmap_mode='r') for v in ['xy','xz','yz']]
-        flows=[np.load(folder/'predictions'/f'{v}_flow.npy',mmap_mode='r') for v in ['xy','xz','yz']]
+        from segment3D import parameters
         agg=parameters.get_2D_to_3D_aggregation_params();agg['gradient_descent']['gradient_decay']=cfg['gradientDecay'];agg['gradient_descent']['do_mp']=False
         agg['postprocess_binary']['binary_fill_holes']=cfg['binaryFillHoles']
-        print('Aggregating',probs[0].shape,'with disk-backed input arrays; no raw stack or Cellpose model loaded',flush=True)
-        labels,auxiliary=usegment3d.aggregate_2D_to_3D_segmentation_direct_method(probs,flows,agg)
-        del auxiliary,probs,flows
-        assert labels.shape==tuple(json.loads((folder/'processing.json').read_text())['processedShape'])
-        save_array(folder/'labels_processed.npy',labels.astype(np.uint32,copy=False))
-        unique=np.unique(labels);details=dict(cells=int(np.count_nonzero(unique)),parameters=agg)
+        if cfg.get('linkingMode')=='streamed':
+            from atlas_streamed_linking import aggregate
+            details=dict(**aggregate(folder,agg),parameters=agg)
+        else:
+            from segment3D import usegment3d
+            probs=[np.load(folder/'predictions'/f'{v}_prob.npy',mmap_mode='r') for v in ['xy','xz','yz']]
+            flows=[np.load(folder/'predictions'/f'{v}_flow.npy',mmap_mode='r') for v in ['xy','xz','yz']]
+            print('Aggregating',probs[0].shape,'with disk-backed input arrays; no raw stack or Cellpose model loaded',flush=True)
+            labels,auxiliary=usegment3d.aggregate_2D_to_3D_segmentation_direct_method(probs,flows,agg)
+            del auxiliary,probs,flows
+            assert labels.shape==tuple(json.loads((folder/'processing.json').read_text())['processedShape'])
+            save_array(folder/'labels_processed.npy',labels.astype(np.uint32,copy=False))
+            unique=np.unique(labels);details=dict(cells=int(np.count_nonzero(unique)),parameters=agg)
         save(folder/'aggregation.json',details)
     elif stage=='export':
         details=export(folder,cfg)
@@ -161,8 +180,8 @@ def export(folder,cfg):
     from skimage.color import label2rgb
     labels=np.load(folder/'labels_processed.npy',mmap_mode='r');info=json.loads((folder/'processing.json').read_text());spacing=np.array(info['effectiveSpacingZYXum']);native=cfg['nativeShape']
     def md(sp):return dict(axes='ZYX',PhysicalSizeZ=float(sp[0]),PhysicalSizeY=float(sp[1]),PhysicalSizeX=float(sp[2]),PhysicalSizeZUnit='µm',PhysicalSizeYUnit='µm',PhysicalSizeXUnit='µm')
-    tifffile.imwrite(folder/'labels_processed.ome.tif',labels,ome=True,metadata=md(spacing),photometric='minisblack')
-    tifffile.imwrite(folder/'labels_native.ome.tif',data=(native_plane(labels,native,z) for z in range(native[0])),shape=tuple(native),dtype=np.uint32,bigtiff=True,ome=True,metadata=md(cfg['spacingZYXum']),photometric='minisblack')
+    tifffile.imwrite(folder/'labels_processed.ome.tif',data=(labels[z] for z in range(labels.shape[0])),shape=labels.shape,dtype=np.uint32,bigtiff=True,ome=True,metadata=md(spacing),photometric='minisblack')
+    tifffile.imwrite(folder/'labels_native.ome.tif',data=(native_plane(labels,native,z,info.get('resamplingZoomZYX')) for z in range(native[0])),shape=tuple(native),dtype=np.uint32,bigtiff=True,ome=True,metadata=md(cfg['spacingZYXum']),photometric='minisblack')
     (folder/'meshes').mkdir(exist_ok=True);rows=[]
     for reg in measure.regionprops(labels):
         v,f,_,_=measure.marching_cubes(np.pad(reg.image,1),.5,spacing=spacing);v+=(np.array(reg.bbox[:3])-1)*spacing
@@ -182,9 +201,16 @@ def export(folder,cfg):
         with tifffile.TiffFile(cfg['source']) as raw_tif:
             if axis==0: im=raw_tif.pages[idx].asarray()
             else: im=np.stack([np.take(page.asarray(),idx,axis=axis-1) for page in raw_tif.pages])
-        pi=min(labels.shape[axis]-1,int((idx+.5)*labels.shape[axis]/native[axis]))
-        from skimage.transform import resize
-        lab=resize(np.take(labels,pi,axis=axis),im.shape,order=0,preserve_range=True,anti_aliasing=False).astype(np.uint32)
+        if 'resamplingZoomZYX' in info:
+            zoom=np.array(info['resamplingZoomZYX'])
+            coordinates=[np.minimum(labels.shape[a]-1,((np.arange(native[a])+.5)*zoom[a]).astype(int)) for a in range(3)]
+            if axis==0:lab=native_plane(labels,native,idx,zoom)
+            elif axis==1:lab=labels[coordinates[0][:,None],coordinates[1][idx],coordinates[2][None,:]]
+            else:lab=labels[coordinates[0][:,None],coordinates[1][None,:],coordinates[2][idx]]
+        else:
+            pi=min(labels.shape[axis]-1,int((idx+.5)*labels.shape[axis]/native[axis]))
+            from skimage.transform import resize
+            lab=resize(np.take(labels,pi,axis=axis),im.shape,order=0,preserve_range=True,anti_aliasing=False).astype(np.uint32)
         lo,hi=np.percentile(im,[1,99.8]);norm=np.clip((im.astype(np.float32)-lo)/max(float(hi-lo),1),0,1)
         axs[0,axis].imshow(norm,cmap='gray');axs[1,axis].imshow(label2rgb(lab,image=norm,colors=colors,alpha=.45,bg_label=0));axs[0,axis].set_title(f'{name} raw · middle slice');axs[1,axis].set_title(f'{name} prediction overlay')
         for row in [0,1]:axs[row,axis].axis('off')
@@ -203,11 +229,21 @@ def run(args):
         if checkpoint.exists():print('Using completed stage:',stage,flush=True);continue
         started=time.time();save(folder/'status.json',dict(status='running',stage=stage,started=started))
         print('Starting',stage,flush=True)
-        with (folder/'logs'/f'{stage}.log').open('a') as log:
+        with (folder/'logs'/f'{stage}.log').open('a') as log, (folder/'logs'/f'{stage}.log').open() as reader:
+            reader.seek(0,2);pending='';inner_fraction=0.;inner_label=stage
+            def relay():
+                nonlocal pending,inner_fraction,inner_label
+                pending+=reader.read()
+                lines=pending.split('\n');pending=lines.pop()
+                for line in lines:
+                    if line.startswith('@segmentation-progress '):
+                        event=json.loads(line.split(' ',1)[1]);inner_fraction=float(event['fraction']);inner_label=event['label']
+                        print(line,flush=True)
             process=subprocess.Popen([sys.executable,str(Path(__file__).resolve()),'--output',str(folder),'--stage',stage],stdout=log,stderr=subprocess.STDOUT,cwd=ROOT)
             peak=0.;minimum_available=100.;low_count=0
             with (folder/'memory.jsonl').open('a') as samples:
                 while process.poll() is None:
+                    relay()
                     try:rss=psutil.Process(process.pid).memory_info().rss/2**30
                     except psutil.NoSuchProcess:rss=0
                     available=psutil.virtual_memory().available/2**30;peak=max(peak,rss);minimum_available=min(minimum_available,available)
@@ -215,8 +251,9 @@ def run(args):
                     low_count=low_count+1 if available<.5 or rss>11.5 else 0
                     if low_count>=3:
                         process.terminate();process.wait();save(folder/'status.json',dict(status='memory_guard_stopped',stage=stage,peakRSSGiB=peak,minAvailableGiB=minimum_available));raise RuntimeError(f'Memory safeguard stopped {stage}: peak sampled process memory {peak:.1f} GiB, lowest available memory {minimum_available:.1f} GiB. Close other memory-heavy apps, or lower processing scale and choose a new results folder. Completed stages remain cached.')
-                    save(folder/'status.json',dict(status='running',stage=stage,elapsedSeconds=time.time()-started,rssGiB=rss,peakRSSGiB=peak,availableGiB=available))
+                    save(folder/'status.json',dict(status='running',stage=inner_label,phase=stage,taskFraction=(STAGES.index(stage)+inner_fraction)/len(STAGES),elapsedSeconds=time.time()-started,rssGiB=rss,peakRSSGiB=peak,availableGiB=available))
                     time.sleep(2)
+            relay()
             if process.returncode!=0:
                 save(folder/'status.json',dict(status='failed',stage=stage,returncode=process.returncode,log=str(folder/'logs'/f'{stage}.log')));raise RuntimeError(f'{stage} failed; see log')
         assert checkpoint.exists();print('Finished',stage,'peak sampled RSS',round(peak,2),'GiB',flush=True)
@@ -225,7 +262,7 @@ def run(args):
     summary=json.loads((folder/'summary.json').read_text());save(folder/'complete.json',dict(status='complete',sourceUnchanged=True,summary=summary,stages=[json.loads((folder/f'{s}.completed.json').read_text()) for s in STAGES]));save(folder/'status.json',dict(status='complete',**summary));print('COMPLETE',json.dumps(summary),flush=True)
 
 def main():
-    p=argparse.ArgumentParser(description=__doc__);p.add_argument('--input',type=Path);p.add_argument('--output',type=Path,required=True);p.add_argument('--scale',type=float,default=.35);p.add_argument('--diameter',type=float,default=30);p.add_argument('--stage',choices=STAGES);p.add_argument('--through-stage',choices=STAGES);p.add_argument('--spacing',type=float,nargs=3);p.add_argument('--model',choices=['cpsam_v2','cpdino','cpdino-vitb'],default='cpsam_v2');p.add_argument('--cpu',action='store_true');p.add_argument('--no-background',action='store_true')
+    p=argparse.ArgumentParser(description=__doc__);p.add_argument('--input',type=Path);p.add_argument('--output',type=Path,required=True);p.add_argument('--scale',type=float,default=.35);p.add_argument('--diameter',type=float,default=30);p.add_argument('--stage',choices=STAGES);p.add_argument('--through-stage',choices=STAGES);p.add_argument('--spacing',type=float,nargs=3);p.add_argument('--model',choices=['cpsam_v2','cpdino','cpdino-vitb'],default='cpsam_v2');p.add_argument('--cpu',action='store_true');p.add_argument('--no-background',action='store_true');p.add_argument('--linking-mode',choices=['standard','streamed'],default='standard')
     args=p.parse_args()
     if args.stage:worker(args.output,args.stage)
     else:

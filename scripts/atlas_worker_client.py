@@ -135,7 +135,7 @@ def receive(endpoint,job,token,run,entry):
     finally:shutil.rmtree(temporary,ignore_errors=True)
 
 
-def remote_stack(endpoint,entry,settings,run,report,credential_path=None):
+def remote_stack(endpoint,entry,settings,run,report,credential_path=None,task_progress=None):
     token=token_for(endpoint,credential_path)
     info=api(endpoint,'GET','/info')
     if info['id']!=endpoint['id'] or {k:info[k] for k in engine()}!=engine():raise ValueError('Worker processing versions differ; update its package.')
@@ -163,6 +163,7 @@ def remote_stack(endpoint,entry,settings,run,report,credential_path=None):
                 if failures>=12:raise RuntimeError('Worker disconnected. Completed checkpoints remain on the worker; resume when it reconnects.')
                 _CANCEL.wait(min(10,failures));continue
             report(saved['stage'])
+            if task_progress:task_progress(float(saved.get('fraction',0)))
             if saved['status']=='complete':break
             if saved['status'] in ('failed','cancelled','interrupted'):raise RuntimeError(saved['stage']+' · Resume preparation to retry cached stages.')
             _CANCEL.wait(1)
@@ -195,7 +196,7 @@ def cancel_all(*unused):
     for thread in threads:thread.join(timeout=1.2)
 
 
-def local_stack(entry,settings,run,logs,report):
+def local_stack(entry,settings,run,logs,report,task_progress=None):
     import subprocess
     run,logs=Path(run),Path(logs);logs.mkdir(parents=True,exist_ok=True)
     dispatch_name=run.parent.name if entry.get('result') else run.name
@@ -208,6 +209,11 @@ def local_stack(entry,settings,run,logs,report):
             for line in process.stdout:
                 log.write(line);log.flush()
                 if line.startswith(('Starting ','Using completed stage:')):report(line.strip())
+                if line.startswith('@segmentation-progress '):
+                    from run_standalone_cellpose import STAGES
+                    value=json.loads(line.split(' ',1)[1]);phase=value['stage']
+                    report(value['label'])
+                    if task_progress and phase in STAGES:task_progress((STAGES.index(phase)+float(value['fraction']))/len(STAGES))
             if process.wait()!=0:raise RuntimeError('Local stack stopped; checkpoints retained. See '+str(logs/(dispatch_name+'-dispatch.log')))
         finally:
             process.stdout.close()
@@ -225,10 +231,13 @@ def dispatch_task(context_id,index,entry,target):
     checkpoint='batch.completed.json' if entry.get('result') else 'complete.json'
     if not (run/checkpoint).exists():
         report(index,name,'Starting '+entry.get('name','stack'))
+        def task_progress(fraction):
+            with lock:
+                state=progress.setdefault(index,{});state['fraction']=max(state.get('fraction',0),min(1,max(0,fraction)))
         if target:
-            record=remote_stack(target,entry,request['settings'],run,lambda s:report(index,name,s))
+            record=remote_stack(target,entry,request['settings'],run,lambda s:report(index,name,s),task_progress=task_progress)
             atomic(run/'worker_provenance.json',record)
-        else:local_stack(entry,request['settings'],run,Path(output)/'logs',lambda s:report(index,name,s))
+        else:local_stack(entry,request['settings'],run,Path(output)/'logs',lambda s:report(index,name,s),task_progress=task_progress)
     with lock:progress[index]=dict(worker=name,stage='Batch complete' if entry.get('result') else 'Stack complete',done=True)
     report(index,name,'Batch complete' if entry.get('result') else 'Stack complete')
     return index
@@ -258,10 +267,11 @@ def distribute(request,output):
     progress={};lock=threading.Lock()
     def report(index,name,stage):
         with lock:
-            done=progress.get(index,{}).get('done',False)
-            progress[index]=dict(worker=name,stage=stage,done=done)
+            previous=progress.get(index,{})
+            done=previous.get('done',False)
+            progress[index]=dict(worker=name,stage=stage,done=done,fraction=previous.get('fraction',0))
             print('@worker-progress '+json.dumps(dict(index=index,worker=name,stage=stage,unit='batch' if request.get('_inferenceBatches') else 'stack')),flush=True)
-            event(f'{name} · {'batch' if request.get('_inferenceBatches') else 'stack'} {index+1}/{len(request["inputs"])} · {stage}', .7*sum(v.get('done',False) for v in progress.values())/len(request['inputs']))
+            event(f'{name} · {'batch' if request.get('_inferenceBatches') else 'stack'} {index+1}/{len(request["inputs"])} · {stage}', .7*sum(1 if v.get('done',False) else v.get('fraction',0) for v in progress.values())/len(request['inputs']))
     context_id=secrets.token_hex(12)
     _CONTEXTS[context_id]=dict(request=request,output=output,report=report,progress=progress,lock=lock)
     # Each local Dask worker controls one device; only fixed HTTPS jobs cross the LAN.

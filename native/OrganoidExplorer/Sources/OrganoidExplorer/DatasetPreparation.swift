@@ -2,6 +2,8 @@ import SwiftUI
 import AppKit
 import UniformTypeIdentifiers
 
+private let atlasStackTypes: [UTType] = [.tiff, UTType(filenameExtension: "npy") ?? UTType(importedAs: "org.numpy.npy", conformingTo: .data)]
+
 struct PreparationInput: Codable, Identifiable {
     var path: String
     var name: String
@@ -26,7 +28,7 @@ private struct InspectedInput: Decodable {
     let spacing: [Double]?
     let sourceStat: [Int64]
     var input: PreparationInput { PreparationInput(path: path, name: name, shape: shape, axes: axes, dtype: dtype,
-        spacing: spacing ?? [0,0,0], calibrationSource: calibrationSource, sourceStat: sourceStat) }
+        spacing: spacing ?? [1,1,1], calibrationSource: calibrationSource, sourceStat: sourceStat) }
 }
 private struct InspectionResult: Decodable { let inputs: [InspectedInput] }
 struct PreparationRequest: Codable {
@@ -36,16 +38,17 @@ struct PreparationRequest: Codable {
     var excludeDetached: Bool
     var harmonics: Bool
     var execution: AtlasExecution? = nil
+    var linkingMode: String? = nil
 }
 private struct PreparationManifest: Decodable { let request: PreparationRequest }
 private struct PreparationProgress: Decodable { let stage: String; let fraction: Double }
 
 struct PreparationMemoryPlan {
     let shape: [Int]
-    let imageGiB, estimatedPeakGiB, budgetGiB: Double
+    let imageGiB, estimatedPeakGiB, budgetGiB, estimatedDiskGiB, scratchGiB: Double
     let fits: Bool
     let suggestedScale: Double?
-    init?(input: PreparationInput, scale: Double, totalMemory: UInt64 = ProcessInfo.processInfo.physicalMemory) {
+    init?(input: PreparationInput, scale: Double, totalMemory: UInt64 = ProcessInfo.processInfo.physicalMemory, linkingMode: String = "standard") {
         guard input.shape.count == 3, input.spacing.count == 3, input.shape.allSatisfy({ $0 > 0 }),
               input.spacing.allSatisfy({ $0.isFinite && $0 > 0 }), scale.isFinite, (0.05...1).contains(scale) else { return nil }
         let gib = 1_073_741_824.0, minimum = input.spacing.min()!
@@ -58,7 +61,10 @@ struct PreparationMemoryPlan {
         shape = dimensions
         let voxels = shape.reduce(1.0) { $0 * Double($1) }
         imageGiB = voxels * 4 / gib
-        estimatedPeakGiB = 1.25 + voxels * 256 / gib
+        let allowance = linkingMode == "streamed" ? 48.0 : 256.0
+        estimatedPeakGiB = 1.25 + voxels * allowance / gib
+        estimatedDiskGiB = (144 * voxels + 4 * input.shape.reduce(1.0) { $0 * Double($1) }) / gib + 1
+        scratchGiB = 24 * voxels / gib
         budgetGiB = min(11.5, 0.65 * Double(totalMemory) / gib)
         fits = (shape.min() ?? 0) >= 2 && estimatedPeakGiB <= budgetGiB
         var suggested: Double?
@@ -66,7 +72,7 @@ struct PreparationMemoryPlan {
         for step in stride(from: min(100, Int(floor(scale * 100))), through: 5, by: -1) {
             let candidate = Double(step) / 100
             let dims = zip(input.shape, input.spacing).map { floor(Double($0.0) * (candidate * ($0.1 / minimum))) }
-            if (dims.min() ?? 0) >= 2 && 1.25 + dims.reduce(1, *) * 256 / gib <= budgetGiB { suggested = candidate; break }
+            if (dims.min() ?? 0) >= 2 && 1.25 + dims.reduce(1, *) * allowance / gib <= budgetGiB { suggested = candidate; break }
         }
         suggestedScale = suggested
     }
@@ -77,6 +83,7 @@ struct PreparationMemoryPlan {
     @Published var title = "New organoid dataset"
     @Published var inputs: [PreparationInput] = []
     @Published var settings = CellposeSettings(model: "cpsam_v2", scale: 0.35)
+    @Published var linkingMode = "standard"
     @Published var excludeDetached = true
     @Published var harmonics = true
     @Published var confirmed = false
@@ -105,14 +112,23 @@ struct PreparationMemoryPlan {
         self.root = root ?? URL(fileURLWithPath: Bundle.main.object(forInfoDictionaryKey: "ExplorerProjectPath") as? String ?? FileManager.default.currentDirectoryPath)
     }
     var largestMemoryPlan: PreparationMemoryPlan? {
-        inputs.filter { !$0.hasProvidedLabels }.compactMap { PreparationMemoryPlan(input: $0, scale: settings.scale) }.max { $0.estimatedPeakGiB < $1.estimatedPeakGiB }
+        inputs.filter { !$0.hasProvidedLabels }.compactMap { PreparationMemoryPlan(input: $0, scale: settings.scale, linkingMode: linkingMode) }.max { $0.estimatedPeakGiB < $1.estimatedPeakGiB }
     }
     var memoryBlocked: Bool {
         inputs.enumerated().contains { index, input in
-            guard !input.hasProvidedLabels, let plan = PreparationMemoryPlan(input: input, scale: settings.scale), !plan.fits else { return false }
+            guard !input.hasProvidedLabels, let plan = PreparationMemoryPlan(input: input, scale: settings.scale, linkingMode: linkingMode), !plan.fits else { return false }
             let completed = output?.appendingPathComponent(String(format: "stacks/Stack_%03d/aggregate.completed.json", index + 1))
             return completed.map { !FileManager.default.fileExists(atPath: $0.path) } ?? true
         }
+    }
+    var diskEstimateGiB: Double {
+        inputs.filter { !$0.hasProvidedLabels }.compactMap { PreparationMemoryPlan(input: $0, scale: settings.scale, linkingMode: linkingMode)?.estimatedDiskGiB }.reduce(0, +)
+    }
+    var availableDiskGiB: Double? {
+        guard var url = output else { return nil }
+        while !FileManager.default.fileExists(atPath: url.path), url.path != "/" { url.deleteLastPathComponent() }
+        guard let attributes = try? FileManager.default.attributesOfFileSystem(forPath: url.path), let bytes = attributes[.systemFreeSize] as? NSNumber else { return nil }
+        return bytes.doubleValue / 1_073_741_824
     }
     func useSuggestedScale() {
         guard !busy, let value = largestMemoryPlan?.suggestedScale, value < settings.scale else { return }
@@ -137,7 +153,7 @@ struct PreparationMemoryPlan {
     func reset() {
         guard !busy else { return }
         clearSlice(); title = "New organoid dataset"; inputs = []; settings = CellposeSettings(model: "cpsam_v2", scale: 0.35)
-        excludeDetached = true; harmonics = true; confirmed = false; output = nil; result = nil
+        linkingMode = "standard"; excludeDetached = true; harmonics = true; confirmed = false; output = nil; result = nil
         progress = 0; workerProgress = [:]; error = nil; log = ""; stage = "Choose raw microscopy stacks to begin."
     }
     func clearSlice() {
@@ -191,16 +207,16 @@ struct PreparationMemoryPlan {
             let selection = OMEZarrSelection(time: time, channel: channel, level: level, label: label, fingerprint: image.fingerprint,
                                             origin: grid.origin, timestamp: image.timestamps.indices.contains(time) ? image.timestamps[time] : nil)
             let input = PreparationInput(path:image.path, name:"\(image.name) · T\(time) · \(image.channels[channel]) · level \(level)",
-                shape:grid.shapeZYX, axes:"ZYX", dtype:grid.dtype, spacing:grid.spacing ?? [0,0,0],
-                calibrationSource:grid.spacing == nil ? "Enter voxel spacing in micrometers" : "OME-NGFF level-specific spatial transforms (µm)", sourceStat:image.sourceStat, omeZarr:selection)
+                shape:grid.shapeZYX, axes:"ZYX", dtype:grid.dtype, spacing:grid.spacing ?? [1,1,1],
+                calibrationSource:grid.spacing == nil ? "No calibration metadata · default 1 × 1 × 1 µm (editable)" : "OME-NGFF level-specific spatial transforms (µm)", sourceStat:image.sourceStat, omeZarr:selection)
             if !inputs.contains(where: { $0.id == input.id }) { inputs.append(input) }
         }
         zarrCatalog = nil; confirmed = false
         stage = "OME-Zarr selections added. Confirm voxel spacing, then test a slice or prepare the dataset."
     }
     func addStacks() {
-        let panel = NSOpenPanel(); panel.allowedContentTypes = [.tiff]; panel.allowsMultipleSelection = true
-        panel.message = "Choose single-channel 3D TIFF stacks. Each stack becomes one organoid entry."
+        let panel = NSOpenPanel(); panel.allowedContentTypes = atlasStackTypes; panel.allowsMultipleSelection = true
+        panel.message = "Choose single-channel 3D TIFF or NumPy (.npy) stacks. NumPy arrays are interpreted as Z/Y/X; confirm voxel spacing below."
         guard panel.runModal() == .OK else { return }
         let paths = panel.urls.map(\.path).filter { path in !inputs.contains { $0.path == path } }
         guard !paths.isEmpty else { return }
@@ -222,8 +238,8 @@ struct PreparationMemoryPlan {
         if panel.runModal() == .OK { output = panel.url; result = nil }
     }
     func importLabels(_ index: Int) {
-        let panel = NSOpenPanel(); panel.allowedContentTypes = [.tiff]
-        panel.message = "Optional: existing integer cell labels on the same Z/Y/X grid. Background must be zero."
+        let panel = NSOpenPanel(); panel.allowedContentTypes = atlasStackTypes
+        panel.message = "Optional: existing integer TIFF or NumPy cell labels on the same Z/Y/X grid. Background must be zero."
         if panel.runModal() == .OK, let url = panel.url {
             do {
                 let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
@@ -241,7 +257,7 @@ struct PreparationMemoryPlan {
         do {
             let manifest = try JSONDecoder().decode(PreparationManifest.self, from: Data(contentsOf: url.appendingPathComponent("preparation.json")))
             let request = manifest.request
-            title = request.title; inputs = request.inputs; settings = request.settings
+            title = request.title; inputs = request.inputs; settings = request.settings; linkingMode = request.linkingMode ?? "standard"
             excludeDetached = request.excludeDetached; harmonics = request.harmonics; workers.restore(request.execution)
             output = url; confirmed = false; result = nil
             stage = "Review the saved settings, then prepare to resume completed steps."
@@ -251,7 +267,7 @@ struct PreparationMemoryPlan {
         guard workers.useLocal || !workers.enabled.isEmpty else { error = "Select this Mac or a paired worker in Nearby Macs."; return }
         guard valid, let output else { return }
         do {
-            let request = PreparationRequest(title: title, inputs: inputs, settings: settings, excludeDetached: excludeDetached, harmonics: harmonics, execution: workers.execution)
+            let request = PreparationRequest(title: title, inputs: inputs, settings: settings, excludeDetached: excludeDetached, harmonics: harmonics, execution: workers.execution, linkingMode: linkingMode == "standard" ? nil : linkingMode)
             let json = try JSONSerialization.jsonObject(with: JSONEncoder().encode(request)) as! [String: Any]
             preparing = true; workerProgress = [:]; progress = 0; stage = "Checking inputs and output folder…"
             execute("build", request: json, destination: output) { [weak self] in
@@ -345,7 +361,7 @@ struct DatasetPreparationView: View {
                     GroupBox("1 · Raw images and calibration") {
                         VStack(alignment: .leading, spacing: 10) {
                             HStack {
-                                Button("Add TIFF stacks…") { preparation.addStacks() }
+                                Button("Add TIFF / NumPy stacks…") { preparation.addStacks() }
                                 Button("Import OME-Zarr…") { preparation.inspectOMEZarr() }
                                 Button("Resume saved preparation…") { preparation.resume() }
                                 Spacer()
@@ -382,7 +398,7 @@ struct DatasetPreparationView: View {
                                     Divider()
                                 }
                             }
-                            Text("Enter missing calibration values. Spacing is the distance between voxel centers in micrometers; Z is the slice step. Each stack becomes one organoid entry.")
+                            Text("NumPy arrays use Z/Y/X order. Missing calibration defaults to 1 × 1 × 1 µm; edit these values if known. Spacing is the distance between voxel centers in micrometers; Z is the slice step. Each stack becomes one organoid entry.")
                                 .font(.caption).foregroundStyle(.secondary)
                         }.padding(6)
                     }
@@ -400,12 +416,20 @@ struct DatasetPreparationView: View {
                             }
                             Text("Scale 0.05–1. Smaller values reduce memory use and detail. Cellpose runs on XY, XZ and YZ views, followed by u-Segment3D linking. First use may download model weights.")
                                 .font(.caption).foregroundStyle(.secondary)
+                            Picker("3D linking", selection: $preparation.linkingMode) {
+                                Text("Standard").tag("standard")
+                                Text("Memory-saving fine grid").tag("streamed")
+                            }.frame(maxWidth: 480)
+                            if preparation.linkingMode == "streamed" {
+                                Text("Keeps the selected resolution. Saves Cellpose predictions and links cells using temporary disk files. Progress is saved every 8 image planes and flow chunks; resume with the same settings. Temporary linking arrays are removed when labels are verified.")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
                             if let plan = preparation.largestMemoryPlan {
                                 VStack(alignment: .leading, spacing: 5) {
                                     Text("Largest processing grid: \(plan.shape.map(String.init).joined(separator: " × ")) · \(plan.imageGiB, specifier: "%.2f") GiB per float image")
-                                    Text("Conservative linking estimate: \(plan.estimatedPeakGiB, specifier: "%.1f") GiB · planning budget: \(plan.budgetGiB, specifier: "%.1f") GiB. Actual memory varies with foreground coverage and other apps.")
+                                    Text("Conservative memory estimate: \(plan.estimatedPeakGiB, specifier: "%.1f") GiB · planning budget: \(plan.budgetGiB, specifier: "%.1f") GiB. Actual memory varies with foreground coverage and other apps.")
                                     if preparation.memoryBlocked {
-                                        Text("This scale is too large for whole-volume linking on this Mac. Sharing inference batches does not pool RAM.").foregroundStyle(.orange)
+                                        Text("This scale exceeds the memory budget on this Mac. Image preparation and exports still need RAM. Sharing inference batches does not pool RAM.").foregroundStyle(.orange)
                                         if let scale = plan.suggestedScale, scale < preparation.settings.scale {
                                             Button(String(format: "Use lower scale %.2f", scale)) { preparation.useSuggestedScale() }
                                             Text("Reduces spatial detail; retest the diameter, which is measured in processed pixels. Existing checkpoints are kept in their original folder.")
@@ -433,8 +457,16 @@ struct DatasetPreparationView: View {
                                 Button("Choose results folder…") { preparation.chooseOutput() }
                                 Text(preparation.output?.path ?? "Choose a new, empty folder").font(.caption).lineLimit(2).textSelection(.enabled)
                             }
-                            Text("Stacks and segmentation stages run sequentially, with checkpoints and a memory safeguard. All results go in this folder. Raw TIFFs stay in their original locations and must remain available.")
+                            Text("Stacks and segmentation stages run sequentially, with checkpoints and a memory safeguard. All results go in this folder. Raw images stay in their original locations. NumPy volumes are cached as calibrated TIFFs in the results folder.")
                                 .font(.caption).foregroundStyle(.secondary)
+                            if preparation.linkingMode == "streamed", !preparation.inputs.allSatisfy({ $0.hasProvidedLabels }) {
+                                Text("Disk estimate for a fresh run: \(preparation.diskEstimateGiB, specifier: "%.1f") GiB across all stacks, including cached predictions, labels and temporary files.")
+                                    .font(.caption).foregroundStyle(.secondary)
+                                if let free = preparation.availableDiskGiB {
+                                    Text("Available on the results drive: \(free, specifier: "%.1f") GiB. Disk space is checked before processing and linking; cached files count toward resumed runs.")
+                                        .font(.caption).foregroundStyle(free < preparation.diskEstimateGiB ? .orange : .secondary)
+                                }
+                            }
                             Toggle("I have checked the Z/Y/X interpretation and voxel spacing for every stack", isOn: $preparation.confirmed)
                         }.padding(6)
                     }

@@ -72,6 +72,7 @@ def export(run, output, sample_id='GFP24h_MV5'):
     labels = np.load(run / 'labels_processed.npy', mmap_mode='r')
     shape = np.array(labels.shape)
     spacing = np.array(processing['effectiveSpacingZYXum'])
+    raw_offset = np.array(processing.get('rawGridOffsetZYXum', [0,0,0]))
     native_spacing = np.array(info['spacingZYXum'])
     if labels.max() > 65535:
         raise ValueError('Atlas previews currently support at most 65535 label IDs per stack.')
@@ -87,7 +88,7 @@ def export(run, output, sample_id='GFP24h_MV5'):
             raise ValueError('Expected one TIFF page per Z plane')
         for iz, z in enumerate(coordinates[0]):
             label_preview[iz] = map_coordinates(labels[int(round(z))], [yy, xx], order=0, prefilter=False)
-            raw_z = z * spacing[0] / native_spacing[0]
+            raw_z = np.clip((z * spacing[0] + raw_offset[0]) / native_spacing[0], 0, len(tif.pages)-1)
             lo = min(int(np.floor(raw_z)), len(tif.pages) - 1)
             hi = min(lo + 1, len(tif.pages) - 1)
             weight = raw_z - lo
@@ -95,8 +96,8 @@ def export(run, output, sample_id='GFP24h_MV5'):
             if hi != lo:
                 plane *= 1 - weight
                 plane += weight * tif.pages[hi].asarray()
-            raw_preview[iz] = map_coordinates(plane, [yy * spacing[1] / native_spacing[1],
-                                                     xx * spacing[2] / native_spacing[2]],
+            raw_preview[iz] = map_coordinates(plane, [(yy * spacing[1] + raw_offset[1]) / native_spacing[1],
+                                                     (xx * spacing[2] + raw_offset[2]) / native_spacing[2]],
                                               order=1, mode='nearest', prefilter=False)
     low, high = np.percentile(raw_preview, [1, 99.7])
     raw_u8 = np.clip((raw_preview - low) / max(high - low, 1e-6) * 255, 0, 255).astype('u1')
@@ -114,6 +115,7 @@ def export(run, output, sample_id='GFP24h_MV5'):
         samples=[dict(id=sample_id, shape=target.tolist(),
                       spacing=(spacing * (shape - 1) / np.maximum(target - 1, 1)).tolist(),
                       extent=(spacing * (shape - 1)).tolist(), rawAvailable=True,
+                      labelGrid=dict(shape=shape.tolist(), spacingZYXum=spacing.tolist(), rawGridOffsetZYXum=raw_offset.tolist(), coordinates='Grid-local voxel centers in micrometers', linkingMode=info.get('linkingMode','standard')),
                       sourceImage=info['source'], sourceLabels=str(run / 'labels_native.ome.tif'), meshCount=len(cells))],
         traditionalFeatures=features, normalization=dict(mean=mean.tolist(), std=std.tolist()),
         provenance=f"Cellpose {info['model']} + u-Segment3D, processing scale {info['scale']}. "

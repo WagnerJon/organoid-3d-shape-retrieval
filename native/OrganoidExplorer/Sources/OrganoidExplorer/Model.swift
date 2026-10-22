@@ -210,6 +210,8 @@ struct VolumeData {
     @Published var referenceMethod = "traditional"
     @Published var sharedMethodColors = true
     @Published var plotColorSettings: [String: PlotColorSettings] = [:]
+    @Published var unifiedPlotColorLevels: Set<String> = []
+    @Published var unifiedPlotColorSettings: [String: PlotColorSettings] = [:]
     @Published var selectedID: String?
     @Published var method = "simclr3d_raw_isolated"
     @Published var search = ""

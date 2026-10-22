@@ -36,7 +36,7 @@ def infer(source, settings, output):
 def prepare(entry, settings, run):
     from types import SimpleNamespace
     from atlas_worker import compute_slot
-    args = SimpleNamespace(input=Path(entry['path']), output=Path(run), spacing=entry['spacing'], scale=settings['scale'], diameter=settings['diameter'], model=settings['model'], cpu=not settings['gpu'], no_background=not settings['background'], through_stage='preprocess')
+    args = SimpleNamespace(input=Path(entry['path']), output=Path(run), spacing=entry['spacing'], scale=settings['scale'], diameter=settings['diameter'], model=settings['model'], cpu=not settings['gpu'], no_background=not settings['background'], through_stage='preprocess',linking_mode=settings.get('linkingMode','standard'))
     with compute_slot():
         pipeline.run(args)
 

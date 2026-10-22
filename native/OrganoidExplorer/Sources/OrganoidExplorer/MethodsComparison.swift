@@ -59,6 +59,7 @@ struct MethodsComparisonView: View {
                     Spacer()
                 }
                 controls
+                coloringControls
                 if comparisonItems.isEmpty {
                     Text("No objects have results for every visible method. Change the filters or turn off ‘Same objects across plots’ to inspect available results.")
                         .font(.callout).foregroundStyle(.orange)
@@ -128,14 +129,41 @@ struct MethodsComparisonView: View {
     }
     var legend: some View {
         HStack(spacing: 10) {
-            ForEach(0..<6) { i in
-                HStack(spacing: 4) { Circle().fill(clusterColors[i]).frame(width: 7, height: 7); Text("\(i+1)") }
+            if !store.unifiedPlotColors || store.plotColors(store.referenceMethod).feature.isEmpty {
+                ForEach(0..<6) { i in
+                    HStack(spacing: 4) {
+                        Circle().fill(store.unifiedPlotColors ? Color(store.plotColors(store.referenceMethod).palette.groupColor(i)) : clusterColors[i]).frame(width: 7, height: 7)
+                        Text("\(i+1)")
+                    }
+                }
             }
-            Text(store.sharedMethodColors ? "Default colors follow \(referenceName) groups. Each plot can override its feature and palette." : "Default colors show each method’s own groups. Each plot can override its feature and palette.")
-                .foregroundStyle(.secondary)
+            Text(coloringDescription).foregroundStyle(.secondary)
             Spacer(minLength: 0)
             Text("\(store.selection.count) marked").foregroundStyle(.teal)
         }.font(.caption2)
+    }
+    var coloringControls: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Toggle("Unify plot colors", isOn: Binding(get: { store.unifiedPlotColors }, set: {
+                store.setUnifiedPlotColors($0, seedMethod: store.referenceMethod)
+            })).toggleStyle(.checkbox)
+                .help("Share one feature and palette across all method plots. Turning this off restores each plot’s previous colors. Cells and organoids retain separate settings.")
+            if store.unifiedPlotColors {
+                PlotColorControls(settings: store.unifiedPlotColorBinding(), features: plotFeatureKeys(store.allItems),
+                                  map: PlotColorMap(settings: store.plotColors(store.referenceMethod), items: store.plotColorDomain(comparisonItems)), scope: .allMethods)
+                    .frame(maxWidth: 420)
+            }
+        }.font(.caption)
+    }
+    var coloringDescription: String {
+        if store.unifiedPlotColors {
+            let settings = store.plotColors(store.referenceMethod)
+            if !settings.feature.isEmpty {
+                return "All plots share \(plotFeatureName(settings.feature)), \(settings.palette.rawValue) and one range across the filtered \(store.level.lowercased()). Gray objects have no value."
+            }
+            return store.sharedMethodColors ? "All plots use \(referenceName) groups and the shared palette." : "All plots use their own groups and the shared palette."
+        }
+        return store.sharedMethodColors ? "Default colors follow \(referenceName) groups. Each plot can override its feature and palette." : "Default colors show each method’s own groups. Each plot can override its feature and palette."
     }
     func methodCard(_ method: Method) -> some View {
         VStack(alignment: .leading, spacing: 8) {

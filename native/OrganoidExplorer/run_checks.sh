@@ -19,6 +19,8 @@ elif [[ "${1:-}" == "--prepare" ]]; then
     CHECK_ENTRY="$PACKAGE_DIR/Checks/PreparationWorker.swift"
 elif [[ "${1:-}" == "--plot-colors" ]]; then
     CHECK_ENTRY="$PACKAGE_DIR/Checks/PlotColorWorker.swift"
+elif [[ "${1:-}" == "--plot-rendering" ]]; then
+    CHECK_ENTRY="$PACKAGE_DIR/Checks/PlotRenderWorker.swift"
 elif [[ "${1:-}" == "--plot-cells" ]]; then
     CHECK_ENTRY="$PACKAGE_DIR/Checks/PlotCellSurfaceWorker.swift"
 fi
@@ -26,6 +28,8 @@ swiftc -O -whole-module-optimization "${COMPILER_FLAGS[@]}" \
     "$PACKAGE_DIR/Sources/OrganoidExplorer/SliceCache.swift" \
     "$PACKAGE_DIR/Sources/OrganoidExplorer/Model.swift" \
     "$PACKAGE_DIR/Sources/OrganoidExplorer/PlotColoring.swift" \
+    "$PACKAGE_DIR/Sources/OrganoidExplorer/PlotRendering.swift" \
+    "$PACKAGE_DIR/Sources/OrganoidExplorer/PlotRender2D.swift" \
     "$PACKAGE_DIR/Sources/OrganoidExplorer/ComparisonMetrics.swift" \
     "$PACKAGE_DIR/Sources/OrganoidExplorer/ShapeAnalysis.swift" \
     "$PACKAGE_DIR/Sources/OrganoidExplorer/PointCloud.swift" \

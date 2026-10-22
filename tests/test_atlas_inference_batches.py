@@ -59,12 +59,13 @@ class BatchTests(unittest.TestCase):
                 atomic(run/'processing.json',dict(processedShape=list(reference.shape)))
             def dispatch(request, output):
                 self.assertTrue(request['_inferenceBatches'])
+                self.assertEqual(request['settings']['linkingMode'],'streamed')
                 self.assertEqual(request['execution']['workers'],[{'id':'fixture'}])
                 for job in request['inputs']:
                     planes=np.load(job['path']);result=Path(job['result']);result.mkdir()
                     np.save(result/'prob.npy',planes);np.save(result/'flow.npy',np.stack((planes+1000,planes+2000)))
                     atomic(result/'batch.completed.json',dict(shape=list(planes.shape)))
-            request=dict(settings={},execution=dict(splitStacks=True,planesPerBatch=2,useLocal=False,workers=[{'id':'fixture'}]))
+            request=dict(settings={'linkingMode':'streamed'},execution=dict(splitStacks=True,planesPerBatch=2,useLocal=False,workers=[{'id':'fixture'}]))
             with patch('prepare_atlas_dataset.call',side_effect=prepare_once) as prep, patch('atlas_worker_client.distribute',side_effect=dispatch) as scheduler:
                 batches.distribute_stack(request,root,0,dict(path='raw.tif',spacing=[1,1,1]))
                 self.assertEqual(prep.call_count,1);self.assertEqual(scheduler.call_count,1)

@@ -1,7 +1,7 @@
 import SwiftUI
 import AppKit
 
-/// Plot-local display settings; never modifies representations or analysis groups.
+/// Display settings; never modifies representations or analysis groups.
 struct PlotColorSettings: Hashable {
     var feature = ""
     var palette: PlotPalette = .atlas
@@ -80,9 +80,41 @@ struct PlotColorMap {
 
 extension ExplorerStore {
     func plotColorKey(_ method: String) -> String { level + "|" + method }
-    func plotColors(_ method: String) -> PlotColorSettings { plotColorSettings[plotColorKey(method)] ?? PlotColorSettings() }
+    var unifiedPlotColors: Bool { unifiedPlotColorLevels.contains(level) }
+    func setUnifiedPlotColors(_ enabled: Bool, seedMethod: String) {
+        if enabled {
+            if unifiedPlotColorSettings[level] == nil {
+                unifiedPlotColorSettings[level] = plotColorSettings[plotColorKey(seedMethod)] ?? PlotColorSettings()
+            }
+            unifiedPlotColorLevels.insert(level)
+        } else {
+            unifiedPlotColorLevels.remove(level)
+        }
+    }
+    func plotColors(_ method: String) -> PlotColorSettings {
+        if unifiedPlotColors { return unifiedPlotColorSettings[level] ?? PlotColorSettings() }
+        return plotColorSettings[plotColorKey(method)] ?? PlotColorSettings()
+    }
+    func plotColorDomain(_ items: [Specimen]) -> [Specimen] { unifiedPlotColors ? filtered : items }
     func plotColorBinding(_ method: String) -> Binding<PlotColorSettings> {
-        Binding(get: { self.plotColors(method) }, set: { self.plotColorSettings[self.plotColorKey(method)] = $0 })
+        Binding(get: { self.plotColors(method) }, set: {
+            if self.unifiedPlotColors { self.unifiedPlotColorSettings[self.level] = $0 }
+            else { self.plotColorSettings[self.plotColorKey(method)] = $0 }
+        })
+    }
+    func unifiedPlotColorBinding() -> Binding<PlotColorSettings> {
+        Binding(get: { self.unifiedPlotColorSettings[self.level] ?? PlotColorSettings() },
+                set: { self.unifiedPlotColorSettings[self.level] = $0 })
+    }
+}
+
+enum PlotColorScope {
+    case thisPlot, allMethods
+    var help: String {
+        switch self {
+        case .thisPlot: return "Only this method's plot changes. Feature ranges use the same visible cohort across plots; coloring does not change grouping or similarity."
+        case .allMethods: return "Every method plot, including expanded windows and rendered images, uses this feature, palette and one range across the filtered cells or organoids. Objects without a method’s representation still contribute to that range. Coloring does not change grouping or similarity."
+        }
     }
 }
 
@@ -90,6 +122,7 @@ struct PlotColorControls: View {
     @Binding var settings: PlotColorSettings
     let features: [String]
     let map: PlotColorMap
+    var scope: PlotColorScope = .thisPlot
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Picker("Color by", selection: Binding(get: { settings.feature }, set: { feature in
@@ -99,10 +132,10 @@ struct PlotColorControls: View {
                 Text("Groups (comparison setting)").tag("")
                 ForEach(features, id: \.self) { Text(plotFeatureName($0)).tag($0) }
                 if !settings.feature.isEmpty && !features.contains(settings.feature) { Text(plotFeatureName(settings.feature) + " · unavailable").tag(settings.feature) }
-            }.accessibilityLabel("Color this plot by a feature")
+            }.accessibilityLabel(scope == .allMethods ? "Color all method plots by a feature" : "Color this plot by a feature")
             Picker("Palette", selection: $settings.palette) {
                 ForEach(PlotPalette.allCases.filter { settings.feature.isEmpty || $0 != .atlas }) { Text($0.rawValue).tag($0) }
-            }.accessibilityLabel("Color palette for this plot")
+            }.accessibilityLabel(scope == .allMethods ? "Color palette for all method plots" : "Color palette for this plot")
             if settings.feature.isEmpty {
                 HStack(spacing: 5) {
                     ForEach(0..<6) { group in
@@ -126,6 +159,6 @@ struct PlotColorControls: View {
                 if map.missing > 0 { Text("Gray: missing value").font(.caption2).foregroundStyle(.secondary) }
             } else { Text("No values available · gray points").font(.caption2).foregroundStyle(.secondary) }
         }.controlSize(.small).font(.caption)
-        .help("Only this method's plot changes. Feature ranges use the same visible cohort across plots; coloring does not change grouping or similarity.")
+        .help(scope.help)
     }
 }

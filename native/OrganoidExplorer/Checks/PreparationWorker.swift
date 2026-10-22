@@ -23,7 +23,8 @@ labels[(z-10)**2+(y-16)**2+(x-25)**2<36]=2
 raw=p/'raw.ome.tif';mask=p/'labels.tif'
 tifffile.imwrite(raw,labels*1000,ome=True,metadata=dict(axes='ZYX',PhysicalSizeZ=2.,PhysicalSizeY=.5,PhysicalSizeX=.5),photometric='minisblack')
 tifffile.imwrite(mask,labels,metadata={'axes':'ZYX'},photometric='minisblack')
-a=inspect(raw);a.update(labels=str(mask),labelStat=[mask.stat().st_size,mask.stat().st_mtime_ns])
+npy=p/'raw.npy';np.save(npy,labels*1000)
+a=inspect(npy);assert a['spacing']==[1.,1.,1.] and 'default' in a['calibrationSource'];a.update(spacing=[2.,.5,.5],labels=str(mask),labelStat=[mask.stat().st_size,mask.stat().st_mtime_ns])
 r=dict(title='Native preparation check',inputs=[a],settings=dict(model='cpsam_v2',scale=.35,diameter=30.,gpu=False,background=True),excludeDetached=True,harmonics=False)
 (p/'request.json').write_text(json.dumps(r))
 """, temporary.path]
@@ -34,6 +35,12 @@ r=dict(title='Native preparation check',inputs=[a],settings=dict(model='cpsam_v2
         big.shape = [578, 1920, 1920]; big.spacing = [0.75, 0.22872330084318845, 0.22872330084318845]; big.labels = nil
         let plan = PreparationMemoryPlan(input: big, scale: 0.85, totalMemory: 16 * 1024 * 1024 * 1024)!
         require(plan.shape == [1611, 1632, 1632] && !plan.fits && plan.suggestedScale == 0.17, "Memory plan matches Python's physical resampling and 16 GiB budget")
+        require(request.linkingMode == nil, "Legacy preparation requests retain standard linking")
+        var streamedRequest = request; streamedRequest.linkingMode = "streamed"
+        let roundTrip = try JSONDecoder().decode(PreparationRequest.self, from: JSONEncoder().encode(streamedRequest))
+        require(roundTrip.linkingMode == "streamed", "Linking choice survives saved requests")
+        let streamed = PreparationMemoryPlan(input: big, scale: 0.85, totalMemory: 16 * 1024 * 1024 * 1024, linkingMode: "streamed")!
+        require(!streamed.fits && streamed.suggestedScale! > plan.suggestedScale!, "Streaming permits a larger grid while retaining the memory guard")
         let planner = DatasetPreparationStore(root: root)
         planner.inputs = [big]; planner.settings.scale = 0.85; planner.confirmed = true
         let failed = temporary.appendingPathComponent("failed-preparation")
@@ -46,7 +53,7 @@ r=dict(title='Native preparation check',inputs=[a],settings=dict(model='cpsam_v2
         require(planner.output != failed && FileManager.default.fileExists(atPath: failed.appendingPathComponent("preparation.json").path), "Changed scale keeps failed checkpoints and chooses a fresh folder")
         let store = DatasetPreparationStore(root: root)
         store.title = request.title; store.inputs = request.inputs; store.settings = request.settings
-        store.harmonics = false; store.output = temporary.appendingPathComponent("output")
+        store.linkingMode = "streamed"; store.harmonics = false; store.output = temporary.appendingPathComponent("output")
         require(!store.valid, "Unconfirmed calibration cannot start")
         store.confirmed = true; require(store.valid, "Confirmed settings can start")
         store.start(); require(store.busy && store.preparing && !store.valid, "Native worker starts and locks edits")
@@ -61,9 +68,11 @@ r=dict(title='Native preparation check',inputs=[a],settings=dict(model='cpsam_v2
         while store.busy && Date().timeIntervalSince(startedAt) < 60 { try await Task.sleep(nanoseconds: 100_000_000) }
         require(!store.busy && store.result != nil && store.error == nil, "Native worker resumes and returns the completed dataset: \(store.error ?? store.log.suffix(1200).description)")
         require(store.progress == 1, "Completion updates progress")
+        let saved = try JSONDecoder().decode(PreparationManifestCheck.self, from: Data(contentsOf: store.output!.appendingPathComponent("preparation.json")))
+        require(saved.request.linkingMode == "streamed", "The native workflow sends and saves the selected linking mode")
         let dataset = try JSONDecoder().decode(Dataset.self, from: Data(contentsOf: store.result!.appendingPathComponent("dataset.json")))
         try dataset.validate()
-        require(dataset.cells.count == 2 && dataset.samples.count == 1, "The result is valid for the real Atlas loader")
+        require(dataset.cells.count == 2 && dataset.samples.count == 1, "The NumPy result is valid for the real Atlas loader")
         store.reset()
         store.inputs = request.inputs
         store.previewSlice(input: request.inputs[0], plane: "xz", index: 12, segment: false)
@@ -79,3 +88,5 @@ r=dict(title='Native preparation check',inputs=[a],settings=dict(model='cpsam_v2
         print("PASS: calibration gate; native process launch; cancellation; resume; progress; Atlas dataset validation; raw slice preview; reset.")
     }
 }
+
+private struct PreparationManifestCheck: Decodable { let request: PreparationRequest }

@@ -148,7 +148,7 @@ def selection_entry(image,time,channel,level,label=None):
         if 'c' in labels['axes'] and mask['shape'][labels['axes'].index('c')]!=1:raise ValueError('Instance labels must have a singleton channel axis')
     selection=dict(time=time,channel=channel,level=level,label=label,fingerprint=image['fingerprint'],origin=grid['origin'],timestamp=image['timestamps'][time] if image['timestamps'] else None)
     name=f"{image['name']} · T{time} · {image['channels'][channel]} · level {level}"
-    return dict(path=image['path'],name=name,shape=grid['shapeZYX'],axes='ZYX',dtype=grid['dtype'],spacing=grid['spacing'],calibrationSource='OME-NGFF level-specific spatial transforms (µm)' if grid['spacing'] else 'Enter voxel spacing in micrometers; OME spatial units are missing or unsupported',sourceStat=image['sourceStat'],omeZarr=selection)
+    return dict(path=image['path'],name=name,shape=grid['shapeZYX'],axes='ZYX',dtype=grid['dtype'],spacing=grid['spacing'] or [1.,1.,1.],calibrationSource='OME-NGFF level-specific spatial transforms (µm)' if grid['spacing'] else 'No usable physical calibration metadata; default 1 × 1 × 1 µm (editable)',sourceStat=image['sourceStat'],omeZarr=selection)
 
 
 def inspect_entry(entry,cache=None):

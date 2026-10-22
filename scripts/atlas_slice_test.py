@@ -25,6 +25,9 @@ def read_slice(entry, plane, index):
         from atlas_ome_zarr import read_slice as zarr_slice
         if plane not in PLANES:raise ValueError('Choose XY, XZ or YZ.')
         return zarr_slice(entry,plane,index)
+    if Path(entry['path']).suffix.lower() == '.npy':
+        from atlas_numpy import read_slice as numpy_slice
+        return numpy_slice(entry, plane, index)
     metadata = inspect(entry['path'])
     if metadata['sourceStat'] != entry['sourceStat']:
         raise ValueError('Raw stack changed since selection. Add it again.')

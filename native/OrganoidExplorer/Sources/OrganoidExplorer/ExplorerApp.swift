@@ -198,33 +198,50 @@ struct ScatterPanel: View {
     var featureColoring = false
     var showActions = true
     var cellShapes: Binding<Bool>? = nil
+    @StateObject private var plotAssets = PlotCellAssets()
+    @State private var canvasSize = CGSize(width: 400, height: 260)
     @State private var localCellShapes = false
     @State private var shapeSize = 28.0
+    private var usesFeatureColors: Bool { featureColoring || store.unifiedPlotColors }
     private var shapeMode: Binding<Bool> { cellShapes ?? $localCellShapes }
+    private var shapeCacheReady: Bool {
+        let required = Set(store.filtered.filter { $0.representations[methodID] != nil && (cohortIDs?.contains($0.id) ?? true) }.map(\.id))
+        return !plotAssets.loading && required.isSubset(of: Set(plotAssets.thumbnails.keys).union(plotAssets.failures.keys))
+    }
+    private var axisPrefix: String { store.dataset?.methods.first(where: { $0.id == methodID })?.projection == "mds" ? "Axis" : "PC" }
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(title).font(.headline).lineLimit(2)
-            if showActions {
-                HStack(spacing: 6) {
+            HStack(spacing: 6) {
+                if showActions {
                     Button { shapeMode.wrappedValue.toggle() } label: {
                         Label(shapeMode.wrappedValue ? "Points" : "Cell shapes", systemImage: "cube")
                             .foregroundStyle(shapeMode.wrappedValue ? Color.teal : Color.secondary)
                     }.font(.caption).disabled(store.level != "Cells" || store.folder == nil)
                         .accessibilityLabel(shapeMode.wrappedValue ? "Show points in this plot" : "Show cell reconstructions in this plot")
                         .help("Replace points with cell surfaces in this plot only. Press again to return to points.")
-                if let method = store.dataset?.methods.first(where: { $0.id == methodID }) {
-                    Button {
-                        PlotWindows.shared.open(method: method, store: store, cohort: cohortIDs, groups: groupLabels, colorMethod: colorMethodID, featureColoring: featureColoring)
-                    } label: { Image(systemName: "arrow.up.left.and.arrow.down.right") }
-                        .help("Open this plot full screen")
-                    Button(["precomputed", "shape_hybrid95"].contains(method.metric) ? "3D" : "3 PCs") {
-                        PlotWindows.shared.open(method: method, store: store, threeD: true, cohort: cohortIDs, groups: groupLabels, colorMethod: colorMethodID, featureColoring: featureColoring)
-                    }.help("Open a rotatable three-axis plot")
+                    if let method = store.dataset?.methods.first(where: { $0.id == methodID }) {
+                        Button {
+                            PlotWindows.shared.open(method: method, store: store, cohort: cohortIDs, groups: groupLabels, colorMethod: colorMethodID, featureColoring: featureColoring)
+                        } label: { Image(systemName: "arrow.up.left.and.arrow.down.right") }
+                            .help("Open this plot full screen")
+                        Button(["precomputed", "shape_hybrid95"].contains(method.metric) ? "3D" : "3 PCs") {
+                            PlotWindows.shared.open(method: method, store: store, threeD: true, cohort: cohortIDs, groups: groupLabels, colorMethod: colorMethodID, featureColoring: featureColoring)
+                        }.help("Open a rotatable three-axis plot")
+                    }
                 }
+                PlotRenderButton(title: title, xLabel: axisPrefix + " 1", yLabel: axisPrefix + " 2") { options, size in
+                    guard !shapeMode.wrappedValue || shapeCacheReady else { throw DataError.invalid("Cell shapes are still loading. Wait for them to finish, then try rendering again.") }
+                    return try PlotRender2D.image(items: store.filtered.filter { cohortIDs?.contains($0.id) ?? true }, methodID: methodID,
+                        colorMethodID: colorMethodID, groups: groupLabels, coloring: usesFeatureColors ? store.plotColors(methodID) : PlotColorSettings(),
+                        selected: store.selectedID, marked: store.selection, thumbnails: plotAssets.thumbnails,
+                        cellShapes: shapeMode.wrappedValue && store.level == "Cells", shapeSize: shapeSize, referenceWidth: canvasSize.width,
+                        options: options, size: size, colorDomain: store.plotColorDomain(store.filtered.filter { cohortIDs?.contains($0.id) ?? true }))
+                }.id(store.level + "|" + methodID)
+                    .disabled(shapeMode.wrappedValue && !shapeCacheReady)
                 Spacer(minLength: 0)
-                }
-            }
-            if featureColoring {
+            }.font(.caption).controlSize(.small)
+            if featureColoring && !store.unifiedPlotColors {
                 let domain = store.filtered.filter { cohortIDs?.contains($0.id) ?? true }
                 PlotColorControls(settings: store.plotColorBinding(methodID), features: plotFeatureKeys(store.allItems),
                                   map: PlotColorMap(settings: store.plotColors(methodID), items: domain))
@@ -242,7 +259,7 @@ struct ScatterPanel: View {
             }
             ScatterCanvas(methodID: methodID, colorMethodID: colorMethodID, cohortIDs: cohortIDs, groupLabels: groupLabels,
                           cellShapes: shapeMode.wrappedValue && store.level == "Cells", shapeSize: shapeSize,
-                          coloring: featureColoring ? store.plotColors(methodID) : PlotColorSettings())
+                          coloring: usesFeatureColors ? store.plotColors(methodID) : PlotColorSettings(), assets: plotAssets, canvasSize: $canvasSize)
             HStack { Text(store.dataset?.methods.first(where: { $0.id == methodID })?.projection == "mds" ? "Axis 2 ↑" : "PC 2 ↑"); Spacer(); Text(store.dataset?.methods.first(where: { $0.id == methodID })?.projection == "mds" ? "Axis 1 →" : "PC 1 →") }.font(.caption2).foregroundStyle(.secondary)
         }.padding(12).background(.background, in: RoundedRectangle(cornerRadius: 10)).overlay(RoundedRectangle(cornerRadius: 10).stroke(.quaternary))
             .onChange(of: store.level) { if store.level != "Cells" { shapeMode.wrappedValue = false } }
@@ -263,7 +280,8 @@ struct ScatterCanvas: View {
     var cellShapes = false
     var shapeSize = 28.0
     var coloring = PlotColorSettings()
-    @StateObject private var assets = PlotCellAssets()
+    @ObservedObject var assets: PlotCellAssets
+    @Binding var canvasSize: CGSize
     @State private var dragStart: CGPoint?
     @State private var dragEnd: CGPoint?
     var body: some View {
@@ -271,9 +289,11 @@ struct ScatterCanvas: View {
             if cellShapes { PlotCellLoadStatus(assets: assets, compact: true) }
             GeometryReader { geo in
                 let dots = makeDots(size: geo.size)
-                let map = PlotColorMap(settings: coloring, items: store.filtered.filter { cohortIDs?.contains($0.id) ?? true })
+                let map = PlotColorMap(settings: coloring, items: store.plotColorDomain(store.filtered.filter { cohortIDs?.contains($0.id) ?? true }))
                 Canvas { context, size in draw(context: &context, size: size, dots: dots, map: map) }
                 .contentShape(Rectangle())
+                .onAppear { canvasSize = geo.size }
+                .onChange(of: geo.size) { canvasSize = geo.size }
                 .gesture(DragGesture(minimumDistance: 0).onChanged { value in
                     dragStart = value.startLocation; dragEnd = value.location
                 }.onEnded { value in

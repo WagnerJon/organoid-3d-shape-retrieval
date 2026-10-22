@@ -3,11 +3,18 @@
 ## Prepare raw images
 
 Choose **New Dataset…** from the opening screen, toolbar or File menu (⌘N).
-Add one or more single-channel Z/Y/X TIFF stacks, confirm each stack's voxel
+Add one or more single-channel Z/Y/X TIFF or NumPy (`.npy`) stacks, confirm each stack's voxel
 spacing in µm, choose Cellpose `cpsam_v2`, `cpdino` or `cpdino-vitb`, and select
 a new results folder. Existing integer label TIFFs can replace segmentation for
 individual stacks. OME and ImageJ calibration are suggested when available;
-missing calibration must be supplied explicitly.
+missing calibration defaults to 1 × 1 × 1 µm and is labeled as a default; edit it if known.
+
+NumPy imports accept numeric 3D arrays in Z/Y/X order, including the BlastoSPIM2
+image stacks. They contain no embedded voxel spacing: Atlas starts with 1 × 1 × 1 µm; edit
+the Z/Y/X values if known and confirm the axis interpretation. Slice previews read only the selected plane
+through a read-only memory map. Preparation streams a calibrated TIFF cache into
+the results folder for local and multi-Mac processing, retaining the original
+array path and source hashes. Existing integer labels can also be NumPy arrays.
 
 In **New Dataset → Segmentation and comparisons → Try settings on one slice**,
 choose a stack, XY/XZ/YZ plane and slice. **Load raw slice** shows the image;
@@ -55,6 +62,18 @@ budget. Raw uint8/uint16 TIFF preprocessing streams planes; global intensity
 normalization and physical spacing are retained. Changing scale uses a fresh
 results folder when earlier checkpoints exist; retest the cell diameter.
 
+Choose **3D linking → Memory-saving fine grid** to retain the selected resolution
+while streaming Cellpose planes and linking through disk-backed arrays. The
+standard mode remains the default. This option works with local, whole-stack
+worker and distributed-plane preparation. Flow chunks and Cellpose views have
+checkpoints; use **Resume saved preparation…** with the same settings. Disk
+estimates and free-space checks cover cached predictions and temporary linking
+files. Temporary linking arrays are removed after final labels are verified;
+Cellpose predictions, final labels and provenance remain cached. Preprocessing
+and exports still require RAM; this does not make an arbitrarily large grid fit.
+New runs record the actual interpolation grid and its offset from raw voxel
+centers so floor-rounded dimensions do not change physical calibration.
+
 Select **Open dataset in Atlas** when preparation finishes. Processing artifacts
 and logs remain beside `atlas_dataset/`; only completed exports are opened.
 Requires the existing project Python environment and u-Segment3D installation.
@@ -87,11 +106,14 @@ Requires Apple Silicon macOS 14 or later for the supplied local build. The Swift
 - Click a labeled cell in a raw slice to select it. Raw previews use independent display contrast per stack, so brightness should not be treated as a quantitative cross-stack measurement.
 - Compare the top traditional and learned neighbors below the table. Click a match to open two interactive 3D views, with centered cells, equal physical scale, and linked rotation/zoom. Switch off isolation to see parent-stack context.
 - Export visible or marked rows as CSV with ⇧⌘E.
+- Click the **camera** on any plot to open a rendering preview. Hide axes, grid, title, legend or selection highlights; edit axis labels and colors; choose light, dark, custom or transparent backgrounds. Copy the image or save a PNG at 1200–4800 pixels wide. The export uses that plot’s current cohort, palette and loaded cell surfaces. Full-screen 3D exports preserve the current camera angle. These rendering choices leave the interactive plot and analysis unchanged.
+
 
 ## Compare learning methods
 
 The **Compare Methods** tab places traditional morphometry and all five self-supervised representations in a 3×2 PCA grid for either cells or stacks.
 
+- Turn on **Unify plot colors** to choose one feature and palette for every method. The shared range uses all filtered cells or organoids, including objects missing from some methods. Expanded windows and PNG exports use the same colors. Turn it off to restore each plot’s earlier settings. Cell and organoid choices remain separate.
 - Each plot has independent **Color by** and **Palette** controls for all numeric measurements present in the dataset, including custom fields and organoid cell counts. Available palettes include Viridis, Magma, Inferno, Cividis, Turbo, blue–white–red and grayscale; Atlas group colors remain available in group mode. Feature legends share the same filtered-cohort range across plots. Missing values are gray and constant features use the palette midpoint. Settings follow the same method into full-screen/3D and reconstructed-cell views; changing a 3D palette preserves the camera. Coloring changes display only, with cell and organoid settings kept separately for the session.
 - Select a **Reference** method. **Reference groups** applies that method’s cluster colors to the same objects in every panel; **Each method’s groups** shows independent cluster assignments.
 - Click any plot to link the selected object across all six spaces. Drag a rectangle to mark a set everywhere. The sidebar filters, QC toggle and marked-only view apply to every panel.

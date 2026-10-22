@@ -16,9 +16,10 @@ app = Path(sys.argv[1])
 info = dict(CFBundleExecutable='OrganoidExplorer', CFBundleIdentifier='org.local.OrganoidAtlas',
             CFBundleName='Organoid Atlas', CFBundleDisplayName='Organoid Atlas',
             CFBundleIconFile='OrganoidAtlas.icns',
-            CFBundlePackageType='APPL', CFBundleShortVersionString='0.1.0', CFBundleVersion='1',
+            CFBundlePackageType='APPL', CFBundleShortVersionString='0.1.3', CFBundleVersion='4',
             NSLocalNetworkUsageDescription='Find paired Atlas workers and transfer microscopy stacks for processing on your local network.', NSBonjourServices=['_atlas-worker._tcp'], LSMinimumSystemVersion='14.0', NSHighResolutionCapable=True,
             ExplorerDatasetPath=sys.argv[2], ExplorerProjectPath=str(Path(sys.argv[2]).parent.parent), NSPrincipalClass='NSApplication')
+info['UTImportedTypeDeclarations'] = [dict(UTTypeIdentifier='org.numpy.npy', UTTypeDescription='NumPy array', UTTypeConformsTo=['public.data'], UTTypeTagSpecification={'public.filename-extension':['npy'], 'public.mime-type':['application/x-npy']})]
 (app/'Contents/Info.plist').write_bytes(plistlib.dumps(info))
 PY
 codesign --force --deep --sign - "$APP_DIR"

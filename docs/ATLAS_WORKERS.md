@@ -57,19 +57,24 @@ normalization and physical resampling. Only the required preprocessed float32
 planes are sent to each worker. Cellpose uses the same supplied diameter and
 per-plane settings as the unsplit pipeline. Singleton final batches are supported.
 The coordinator checks coverage and assembles all probabilities and directional
-flows on disk before running **one whole-volume u-Segment3D aggregation** and
+flows on disk before running **one global u-Segment3D linking step** and
 export. There is no independent 3D slab segmentation or label stitching, so
 batch boundaries do not truncate cells.
 
 Image preparation and final 3D linking still require sufficient RAM on the
 coordinating Mac, even when This Mac is deselected for inference. This option
-speeds shared inference; it does not solve an oversized aggregation volume.
+speeds shared inference. Select the separate memory-saving linking option to
+reduce the coordinator’s linking memory use.
 Transfer and model-loading overhead can make small stacks slower; prefer larger
 batches on fast networks. Temporary batch files and returned predictions need
 additional disk space. Transfer-only plane files are deleted after successful
 assembly. Batch results, logs, hashes and checkpoints remain under
 `stacks/Stack_*/inference_batches/`; completed views are reused on resume.
 Imported label stacks bypass inference as before.
+
+NumPy image and label arrays are first streamed into calibrated TIFF caches on
+the coordinating Mac. Missing calibration starts at 1 × 1 × 1 µm and remains
+editable. Original NumPy paths and checksums are retained in dataset provenance.
 
 Raw/label TIFFs are streamed to a worker cache and SHA-256 verified. Identical
 inputs are sent only once. Results return as a checksum-verified archive;
@@ -117,7 +122,8 @@ A fresh X001 end-to-end run (scale 0.15, six batches of up to 32 planes) also pr
 
 Before inference, Atlas estimates the physically resampled grid, the size of one
 float32 image and a conservative whole-volume linking allowance (256 bytes per
-processed voxel plus 1.25 GiB runtime overhead, capped by the existing process
+processed voxel for Standard, or 48 bytes for Memory-saving fine grid, plus
+1.25 GiB runtime overhead, capped by the existing process
 safeguard and 65% of installed RAM). This is a planning heuristic, not a measured
 peak or a guarantee; foreground occupancy and other apps affect actual memory.
 The app explicitly offers a lower processing scale and keeps prior settings in
@@ -142,3 +148,34 @@ actual TIFF at 0.17 completed in 20.4 seconds with reported peak process RSS
 `tests/test_atlas_preprocessing.py` verifies early rejection before pixel reads,
 compressed TIFF streaming, exact positive medians, trilinear interpolation,
 global background/normalization parity and median-filter boundaries.
+
+## Memory-saving fine-grid linking
+
+Choose **New Dataset → Segmentation and comparisons → 3D linking → Memory-saving
+fine grid**. It retains the chosen grid and existing u-Segment3D parameters:
+probabilities/flows are fused with filtering halos, foreground trajectories run
+in bounded batches, and connected components are reconciled globally. This
+avoids independent slab labels and coarse-grid merging. It supports the current
+fixed Atlas settings; unsupported parameter changes fail explicitly.
+
+Local Cellpose views stream one plane at a time and save progress every eight
+planes. Linking saves completed fusion and eight-plane trajectory chunks. Cancel
+stops the processing group; resume with unchanged inputs, settings and pipeline
+versions reuses these checkpoints. Fusion and global component stages restart
+if interrupted. Final labels are verified before temporary linking arrays are
+removed. Cached predictions and the small linking manifest remain.
+
+The results drive supplies scratch space (planning allowance about 24 bytes per
+processed voxel, plus retained predictions/exports). Atlas checks free space
+before processing and linking. Remote whole-stack jobs use the worker’s drive;
+split-plane jobs link on the coordinator. The same mode is sent to workers, and
+pipeline hashes prevent mixing old and new worker packages. Update and reopen
+both Atlas and Atlas Worker after replacing the package.
+
+The new implementation preserved every label voxel up to instance ID numbering
+on the cached MV5 stack (186 objects) and the real large-stack crop (14 objects).
+The crop also passed preparation through meshes, physical measurements, QC,
+feature descriptors and Atlas export. See `results/streamed-linking-integration/`.
+These checks establish numerical parity, not biological accuracy. The full
+large raw stack has not been processed at high resolution. Preprocessing,
+large image planes, exports and foreground coverage still constrain RAM.

@@ -72,12 +72,29 @@ class WorkerTests(unittest.TestCase):
             self.assertTrue((run/'worker_provenance.json').exists())
             self.assertIn('/inputs/',json.loads((run/'run.json').read_text())['source'])
 
+    def test_numpy_is_materialized_before_remote_dispatch(self):
+        raw = self.root/'worker-import.npy'; mask = self.root/'worker-labels.npy'
+        np.save(raw, tifffile.imread(self.request['inputs'][0]['path']))
+        np.save(mask, tifffile.imread(self.request['inputs'][0]['labels']))
+        entry = inspect(raw)
+        entry.update(spacing=[2.,.5,.5],labels=str(mask),labelStat=[mask.stat().st_size,mask.stat().st_mtime_ns])
+        request = copy.deepcopy(self.request); request['inputs'] = [entry]
+        atlas = build(request,self.root/'numpy-distributed')
+        dataset = json.loads((atlas/'dataset.json').read_text())
+        self.assertEqual(len(dataset['cells']),2)
+        self.assertEqual(Path(dataset['samples'][0]['sourceNumPy']['path']).resolve(),raw.resolve())
+        self.assertEqual(Path(dataset['samples'][0]['sourceNumPy']['labels']).resolve(),mask.resolve())
+        run = self.root/'numpy-distributed/stacks/Stack_001'
+        self.assertTrue((run/'worker_provenance.json').exists())
+        self.assertIn('/inputs/',json.loads((run/'run.json').read_text())['source'])
+        self.assertTrue(Path(dataset['samples'][0]['sourceImage']).is_file())
+
     def test_cancellation_single_slot_and_checkpoint_retry(self):
         endpoint=self.endpoints[0];server=self.servers[0];token=client.token_for(endpoint)
         entry=self.request['inputs'][0]
         raw=client.upload(endpoint,entry['path'],token,lambda s:None)
         label=client.upload(endpoint,entry['labels'],token,lambda s:None)
-        settings=dict(self.request['settings'],diameter=31.)
+        settings=dict(self.request['settings'],diameter=31.,linkingMode='streamed')
         payload=dict(spec=dict(rawHash=raw,labelHash=label,spacing=entry['spacing'],settings=settings),compatibility=worker.engine())
         job=client.api(endpoint,'POST','/jobs',payload,token)['id']
         other=copy.deepcopy(payload);other['spec']['settings']['diameter']=32.
