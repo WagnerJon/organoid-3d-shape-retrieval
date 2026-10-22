@@ -3,14 +3,28 @@ import SwiftUI
 struct CellposeSettings: Codable, Equatable {
     static let models = ["cpsam_v2","cpdino","cpdino-vitb"]
     var model = "cpsam_v2", scale = 0.5, diameter = 30.0, background = true, gpu = true
+    var flowThreshold = 0.4
     func json() throws -> [String:Any] { try JSONSerialization.jsonObject(with:JSONEncoder().encode(self)) as! [String:Any] }
     static func fromJSON(_ settings:[String:Any]) throws -> CellposeSettings {
         var merged = try CellposeSettings().json()
         for (key,value) in settings where merged[key] != nil { merged[key] = value }
         if let background = settings["background_correction"] { merged["background"] = background }
+        if let threshold = settings["flow_threshold"] { merged["flowThreshold"] = threshold }
         let value = try JSONDecoder().decode(CellposeSettings.self,from:JSONSerialization.data(withJSONObject:merged))
         guard models.contains(value.model) else { throw DataError.invalid("Unknown Cellpose model") }
         return value
+    }
+}
+
+extension CellposeSettings {
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        model = try values.decode(String.self, forKey: .model)
+        scale = try values.decode(Double.self, forKey: .scale)
+        diameter = try values.decode(Double.self, forKey: .diameter)
+        background = try values.decode(Bool.self, forKey: .background)
+        gpu = try values.decode(Bool.self, forKey: .gpu)
+        flowThreshold = try values.decodeIfPresent(Double.self, forKey: .flowThreshold) ?? 0.4
     }
 }
 

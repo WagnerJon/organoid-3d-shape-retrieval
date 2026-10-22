@@ -19,8 +19,16 @@ array path and source hashes. Existing integer labels can also be NumPy arrays.
 In **New Dataset → Segmentation and comparisons → Try settings on one slice**,
 choose a stack, XY/XZ/YZ plane and slice. **Load raw slice** shows the image;
 **Test segmentation on this slice** runs the current Cellpose settings and shows
-raw microscopy alongside a cell-label overlay with opacity controls. Settings
-remain shared with full dataset preparation, and changing settings marks the
+raw microscopy alongside a cell-label overlay with opacity controls. **Show
+diameter guide** adds a translucent purple disc to both previews, sized from the
+Cellpose diameter in processed pixels, the processing scale and voxel spacing.
+It follows the fitted image in XY/XZ/YZ and updates immediately when diameter or
+scale changes. Changing calibration clears the preview so it can be reloaded
+with the correct aspect ratio. **Flow threshold (slice test)** controls Cellpose's
+2D mask consistency filter (default `0.4`; `0` disables it). This threshold does
+not affect full-volume u-Segment3D linking, which consumes raw flows rather than
+2D masks. Other Cellpose settings remain shared with full dataset preparation,
+and changing settings marks the
 previous test as stale. Only one test/preparation worker runs at a time; Cancel
 also stops a slice test. No output folder or completed dataset is needed.
 

@@ -24,7 +24,7 @@ class SliceTests(unittest.TestCase):
         tifffile.imwrite(self.path, self.raw, compression='zlib', ome=True, photometric='minisblack',
                          metadata=dict(axes='ZYX',PhysicalSizeZ=2.,PhysicalSizeY=.5,PhysicalSizeX=.5))
         self.entry = inspect(self.path)
-        self.settings = dict(model='cpdino-vitb',scale=.5,diameter=21.,gpu=False,background=True)
+        self.settings = dict(model='cpdino-vitb',scale=.5,diameter=21.,gpu=False,background=True,flowThreshold=.75)
         self.request = dict(input=self.entry,plane='xy',index=6,settings=self.settings)
 
     def tearDown(self): self.temp.cleanup()
@@ -64,6 +64,7 @@ class SliceTests(unittest.TestCase):
         result = run(self.request,output,segment=True,model_factory=Model)
         self.assertEqual(observed['pretrained_model'],'cpdino-vitb')
         self.assertFalse(observed['gpu']);self.assertEqual(observed['diameter'],21.)
+        self.assertEqual(observed['flow_threshold'],.75)
         self.assertFalse(observed['do_3D']); self.assertTrue(observed['compute_masks'])
         self.assertEqual(observed['shape'],(20,24))
         self.assertEqual(result['cells'],2)
@@ -76,6 +77,25 @@ class SliceTests(unittest.TestCase):
         self.assertEqual(self.path.read_bytes(),before)
         self.assertIn('no cross-slice',result['note'])
         with self.assertRaises(FileExistsError): run(self.request,output)
+
+    def test_flow_threshold_default_zero_and_invalid_values(self):
+        observed = []
+        class Model:
+            device = 'cpu'
+            def __init__(self, **kwargs): pass
+            def eval(self, image, **kwargs):
+                observed.append(kwargs['flow_threshold'])
+                return np.zeros(image.shape, np.uint16), [], None
+        legacy = copy.deepcopy(self.request); del legacy['settings']['flowThreshold']
+        run(legacy, self.root/'legacy', segment=True, model_factory=Model)
+        disabled = copy.deepcopy(self.request); disabled['settings']['flowThreshold'] = 0.
+        run(disabled, self.root/'disabled', segment=True, model_factory=Model)
+        self.assertEqual(observed, [.4, 0.])
+        for i, value in enumerate([-1., float('nan'), float('inf')]):
+            invalid = copy.deepcopy(self.request); invalid['settings']['flowThreshold'] = value
+            with self.assertRaisesRegex(ValueError, 'Flow threshold'):
+                run(invalid, self.root/f'invalid-{i}', segment=True, model_factory=Model)
+        self.assertEqual(observed, [.4, 0.])
 
     def test_anisotropy_invalid_spacing_and_pixel_limits(self):
         image, dimensions = read_slice(self.entry,'xz',10)

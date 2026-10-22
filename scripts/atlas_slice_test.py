@@ -102,6 +102,9 @@ def run(request, output, segment=False, model_factory=None):
     if segment:
         started = time.monotonic()
         settings = request['settings']
+        flow_threshold = float(settings.get('flowThreshold', 0.4))
+        if not np.isfinite(flow_threshold) or flow_threshold < 0:
+            raise ValueError('Flow threshold must be a finite number of 0 or greater.')
         if settings['model'] not in ('cpsam_v2','cpdino','cpdino-vitb'):
             raise ValueError('Unsupported Cellpose model.')
         event('Preparing slice', .15)
@@ -112,7 +115,8 @@ def run(request, output, segment=False, model_factory=None):
             model_factory = CellposeModel
         model = model_factory(pretrained_model=settings['model'], gpu=bool(settings['gpu']))
         event('Segmenting this slice', .5)
-        masks, _, _ = model.eval(processed, diameter=float(settings['diameter']), do_3D=False, compute_masks=True)
+        masks, _, _ = model.eval(processed, diameter=float(settings['diameter']), flow_threshold=flow_threshold,
+                                 do_3D=False, compute_masks=True)
         if masks.shape != processed.shape or not np.issubdtype(masks.dtype, np.integer) or np.any(masks < 0):
             raise ValueError('Cellpose returned invalid 2D labels.')
         native_labels = resize(masks, image.shape, order=0, preserve_range=True, anti_aliasing=False).astype(np.uint32)

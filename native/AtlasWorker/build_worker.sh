@@ -21,7 +21,7 @@ for name in ['LICENSE','LICENSE.txt']:
     path=root/'vendor/u-segment3D'/name
     if path.exists():shutil.copy2(path,out/name)
 app=out/'Atlas Worker.app'
-info=dict(CFBundleExecutable='AtlasWorker',CFBundleIdentifier='org.local.OrganoidAtlas.Worker',CFBundleName='Atlas Worker',CFBundlePackageType='APPL',CFBundleShortVersionString='0.1.3',CFBundleVersion='4',LSMinimumSystemVersion='14.0',NSPrincipalClass='NSApplication',NSLocalNetworkUsageDescription='Advertise an Atlas Worker and process microscopy stacks sent by your paired Macs.',NSBonjourServices=['_atlas-worker._tcp'])
+info=dict(CFBundleExecutable='AtlasWorker',CFBundleIdentifier='org.local.OrganoidAtlas.Worker',CFBundleName='Atlas Worker',CFBundlePackageType='APPL',CFBundleShortVersionString='0.1.4',CFBundleVersion='1',LSMinimumSystemVersion='14.0',NSPrincipalClass='NSApplication',NSLocalNetworkUsageDescription='Advertise an Atlas Worker and process microscopy stacks sent by your paired Macs.',NSBonjourServices=['_atlas-worker._tcp'])
 (app/'Contents/Info.plist').write_bytes(plistlib.dumps(info))
 (out/'README.md').write_text('''# Atlas Worker for Apple Silicon Macs
 

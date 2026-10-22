@@ -31,6 +31,23 @@ r=dict(title='Native preparation check',inputs=[a],settings=dict(model='cpsam_v2
         try fixture.run(); fixture.waitUntilExit()
         require(fixture.terminationStatus == 0, "Fixture generation succeeds")
         let request = try JSONDecoder().decode(PreparationRequest.self, from: Data(contentsOf: temporary.appendingPathComponent("request.json")))
+        require(request.settings.flowThreshold == 0.4, "Legacy settings retain Cellpose's default flow threshold")
+        var thresholdSettings = request.settings; thresholdSettings.flowThreshold = 0.75
+        let decodedThreshold = try JSONDecoder().decode(CellposeSettings.self, from: JSONEncoder().encode(thresholdSettings))
+        require(decodedThreshold.flowThreshold == 0.75 && decodedThreshold != request.settings, "Flow threshold survives requests and marks previous slice results stale")
+        let guide = try JSONDecoder().decode(PreparationSliceResult.self, from: Data("""
+        {"path":"raw.tif","plane":"xy","note":"check","index":0,"nativeShape":[100,200],"spacing":[2,0.5,0.5]}
+        """.utf8))
+        let fitted = PreparationDiameterGuide.imageRect(image: CGSize(width: 400, height: 200), canvas: CGSize(width: 400, height: 300))
+        require(fitted == CGRect(x: 0, y: 50, width: 400, height: 200), "Guide follows the fitted image, excluding letterboxing")
+        require(PreparationDiameterGuide.displayDiameter(result: guide, imageRect: fitted, scale: 0.5, diameter: 30) == 120, "30 processed pixels at half scale cover 60 native pixels")
+        require(PreparationDiameterGuide.displayDiameter(result: guide, imageRect: fitted, scale: 0.25, diameter: 30) == 240, "Changing processing scale updates the guide without reloading")
+        let orthogonal = try JSONDecoder().decode(PreparationSliceResult.self, from: Data("""
+        {"path":"raw.tif","plane":"yz","note":"check","index":0,"nativeShape":[25,100],"spacing":[2,0.5,0.5]}
+        """.utf8))
+        let square = PreparationDiameterGuide.imageRect(image: CGSize(width: 200, height: 200), canvas: CGSize(width: 400, height: 200))
+        require(PreparationDiameterGuide.displayDiameter(result: orthogonal, imageRect: square, scale: 0.5, diameter: 30) == 120, "Anisotropic YZ previews use physical spacing and remain circular")
+        require(PreparationDiameterGuide.displayDiameter(result: guide, imageRect: fitted, scale: 0, diameter: 30) == nil, "Invalid scale hides the guide")
         var big = request.inputs[0]
         big.shape = [578, 1920, 1920]; big.spacing = [0.75, 0.22872330084318845, 0.22872330084318845]; big.labels = nil
         let plan = PreparationMemoryPlan(input: big, scale: 0.85, totalMemory: 16 * 1024 * 1024 * 1024)!
