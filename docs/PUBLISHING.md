@@ -1,6 +1,8 @@
 # GitHub repository and updates
 
-The project is published at [WagnerJon/organoid-3d-shape-retrieval](https://github.com/WagnerJon/organoid-3d-shape-retrieval). It contains code, configs, tests, the report, analytical figures and summary tables. It deliberately excludes the large local workspace outputs, source TIFFs/masks, meshes, embeddings, checkpoints, and upstream code. Review the [data policy](DATA.md) and [report limitations](REPORT.md) before sharing additional artifacts.
+The project is published at [WagnerJon/organoid-atlas](https://github.com/WagnerJon/organoid-atlas). It contains code, configs, tests, the report, analytical figures and summary tables. It deliberately excludes the large local workspace outputs, source TIFFs/masks, meshes, embeddings, checkpoints, and upstream code. Review the [data policy](DATA.md) and [report limitations](REPORT.md) before sharing additional artifacts.
+
+The former `WagnerJon/organoid-3d-shape-retrieval` repository URL redirects to this repository. Do not reuse that repository name under the same account, as doing so would remove the redirect. GitHub Pages uses https://wagnerjon.github.io/organoid-atlas/; the former Pages URL is not redirected. The existing Zenodo DOI remains unchanged.
 
 For later changes, run from the repository root:
 

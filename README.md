@@ -1,8 +1,8 @@
-# 3D organoid shape experiments
+# Organoid Atlas
 
 [![DOI](https://zenodo.org/badge/1382329799.svg)](https://zenodo.org/badge/latestdoi/1382329799)
 
-Exploring cell shape in 3D microscopy: segmentation, classical morphometry, learned representations and reconstruction. **108 stacks · 1,088 segmented cells** from [Mouse-Organoid-Cells-CBG](https://github.com/juglab/EmbedSeg/releases/tag/v0.1.0).
+Native macOS visualization and exploratory analysis of smaller 3D organoid and cell datasets, with linked microscopy, shape comparisons and scientific rendering workflows. Supporting experiments compare segmentation, classical morphometry and learned representations. **108 stacks · 1,088 segmented cells** from [Mouse-Organoid-Cells-CBG](https://github.com/juglab/EmbedSeg/releases/tag/v0.1.0).
 
 ![An organoid separates into individual cells, moves into a shape atlas and reveals its nearest shape matches](docs/figures/organoid_to_shape_atlas.gif)
 
