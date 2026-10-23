@@ -177,12 +177,14 @@ def run(source, method, settings, folder, reuse=None, purpose=None, comparison_s
         settings['model'] = model
         config = dict(spacing_zyx_um=source['spacing'], scale=float(settings['scale']), model=model,
                       diameter=float(settings['diameter']), gpu=bool(settings['gpu']), background_correction=bool(settings['background']), gradient_decay=.05)
+        from atlas_cellpose_3d import settings as native_settings
+        config.update(native_settings(settings))
         if not 0.05 <= config['scale'] <= 1 or not 2 <= config['diameter'] <= 500:
             raise ValueError('Cellpose scale must be 0.05–1 and diameter 2–500 processed pixels.')
         _, labels, _ = predict(Path(source['path']), config, folder, progress=progress)
         weights = Path(os.environ.get('CELLPOSE_LOCAL_MODELS_PATH', str(ROOT / '.cache/cellpose'))) / model
         if weights.is_file(): settings['checkpointSHA256'] = fingerprint(weights)
-        provenance = f'Cellpose {model}, XY/XZ/YZ inference + u-Segment3D aggregation. Image only; no reference masks.'
+        provenance = f'Cellpose {model}, '+('native do_3D=True; MPS prediction with CPU 3D masks when using Apple GPU' if config['segmentationMode']=='cellpose3d' else 'XY/XZ/YZ inference + u-Segment3D aggregation')+'. Image only; no reference masks.'
     elif method == 'panseg':
         from panseg_explorer import run_panseg
         labels, settings, provenance, prediction = run_panseg(raw, source, settings, folder, progress, PansegProgress, fingerprint, reuse=reuse)
@@ -195,7 +197,7 @@ def run(source, method, settings, folder, reuse=None, purpose=None, comparison_s
     verify_source(source)
     progress("Writing native labels, previews and cell measurements", .95)
     extras = {'purpose':purpose}
-    if method == 'cellpose': extras.update(cellposeModel=model, comparisonSide=comparison_side)
+    if method == 'cellpose': extras.update(cellposeModel=model, cellposeMode=config['segmentationMode'], comparisonSide=comparison_side)
     if method == 'panseg': extras['prediction'] = prediction
     return publish(labels, source, folder, method, settings, time.time()-start, provenance, extras=extras)
 
@@ -290,9 +292,10 @@ def main():
         if list(labels.shape) != source['nativeShape']:
             raise ValueError('Imported labels must match the native raw grid. Select labels_native.tif.')
         args.output.parent.mkdir(parents=True, exist_ok=True)
-        original = json.loads((Path(request['labels']).parent/'settings.json').read_text()) if (Path(request['labels']).parent/'settings.json').exists() else None
+        metadata_path=next((Path(request['labels']).parent/name for name in ['settings.json','run.json'] if (Path(request['labels']).parent/name).is_file()),None)
+        original = json.loads(metadata_path.read_text()) if metadata_path else None
         model = (original.get('config', original).get('model', 'unknown') if original else 'unknown')
-        result=publish(labels, source, args.output.parent, request['method'], {'importedFrom':request['labels'], 'originalSettings':original}, 0., 'Imported existing native-grid labels; original settings remain alongside their source file.', extras={'cellposeModel':model if request['method'] == 'cellpose' else None, 'comparisonSide':request.get('comparisonSide')})
+        result=publish(labels, source, args.output.parent, request['method'], {'importedFrom':request['labels'], 'originalSettings':original}, 0., 'Imported existing native-grid labels; original settings remain alongside their source file.', extras={'cellposeModel':model if request['method'] == 'cellpose' else None, 'cellposeMode':original.get('config',original).get('segmentationMode','usegment3d') if original and request['method']=='cellpose' else None, 'comparisonSide':request.get('comparisonSide')})
     else:
         verify_source(request['source']); result=compare(request['a'],request['b'],request['source'])
     save(args.output,result)

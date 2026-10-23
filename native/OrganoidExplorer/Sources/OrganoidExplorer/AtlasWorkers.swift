@@ -282,6 +282,7 @@ struct AtlasWorkersView: View {
 struct AtlasWorkerSelection: View {
     @ObservedObject var workers: AtlasWorkers
     @Binding var showWorkers: Bool
+    var allowPlaneBatches = true
     var body: some View {
         GroupBox("Processing Macs") {
           VStack(alignment: .leading, spacing: 10) {
@@ -293,7 +294,8 @@ struct AtlasWorkerSelection: View {
                 Spacer()
                 Button("Nearby Macs…") { showWorkers = true }
             }
-            Toggle("Split large stacks into distributed batches", isOn: $workers.splitStacks)
+            Toggle("Split large stacks into distributed batches", isOn: $workers.splitStacks).disabled(!allowPlaneBatches)
+            if !allowPlaneBatches { Text("Native Cellpose 3D runs each complete stack on one selected Mac. Plane batches and streamed u-Segment3D linking are unavailable in this mode.").font(.caption).foregroundStyle(.secondary) }
             if workers.splitStacks {
                 Picker("Planes per batch", selection: $workers.planesPerBatch) {
                     Text("8").tag(8); Text("16 (recommended)").tag(16); Text("32").tag(32); Text("64").tag(64)

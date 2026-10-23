@@ -52,13 +52,24 @@ class PreparationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'single-channel'):
             inspect(path)
 
-    def test_missing_calibration_defaults_to_unit_voxels(self):
+    def test_missing_calibration_estimates_depth_without_stretching_xy(self):
         path=self.root/'uncalibrated.tif'
         tifffile.imwrite(path,np.zeros((3,4,5),np.uint16),metadata={'axes':'ZYX'},photometric='minisblack')
         metadata=inspect(path)
-        self.assertEqual(metadata['spacing'],[1.,1.,1.])
-        self.assertIn('default 1 × 1 × 1',metadata['calibrationSource'])
+        self.assertEqual(metadata['spacing'],[5/3,1.,1.])
+        self.assertIn('assume cubic stack',metadata['calibrationSource'])
+        self.assertIn('Absolute physical scale is unknown',metadata['calibrationSource'])
         self.assertEqual(inspect(self.entries[0]['path'])['spacing'],[2.,.5,.5])
+
+    def test_cubic_estimate_keeps_xy_equal_for_square_rectangular_and_deep_stacks(self):
+        from atlas_calibration import assumed_cubic_spacing
+        for shape in [(64,512,512),(64,256,512),(64,512,256),(1024,256,512)]:
+            z,y,x=shape; spacing=assumed_cubic_spacing(shape)
+            self.assertEqual(spacing[1:],[1.,1.])
+            self.assertEqual(z*spacing[0],max(y,x))
+            self.assertEqual((x*spacing[2])/(y*spacing[1]),x/y)
+        for shape in [(0,12,12),(12,12),(12,12,-1)]:
+            with self.assertRaises(ValueError): assumed_cubic_spacing(shape)
 
     def test_joint_dataset_geometry_measurements_and_exclusions(self):
         data = self.data

@@ -23,6 +23,10 @@ elif [[ "${1:-}" == "--plot-rendering" ]]; then
     CHECK_ENTRY="$PACKAGE_DIR/Checks/PlotRenderWorker.swift"
 elif [[ "${1:-}" == "--plot-cells" ]]; then
     CHECK_ENTRY="$PACKAGE_DIR/Checks/PlotCellSurfaceWorker.swift"
+elif [[ "${1:-}" == "--missing-methods" ]]; then
+    CHECK_ENTRY="$PACKAGE_DIR/Checks/MissingMethodsWorker.swift"
+elif [[ "${1:-}" == "--demo" ]]; then
+    CHECK_ENTRY="$PACKAGE_DIR/Checks/DemoDatasetWorker.swift"
 fi
 swiftc -O -whole-module-optimization "${COMPILER_FLAGS[@]}" \
     "$PACKAGE_DIR/Sources/OrganoidExplorer/SliceCache.swift" \
@@ -32,6 +36,8 @@ swiftc -O -whole-module-optimization "${COMPILER_FLAGS[@]}" \
     "$PACKAGE_DIR/Sources/OrganoidExplorer/PlotRender2D.swift" \
     "$PACKAGE_DIR/Sources/OrganoidExplorer/ComparisonMetrics.swift" \
     "$PACKAGE_DIR/Sources/OrganoidExplorer/ShapeAnalysis.swift" \
+    "$PACKAGE_DIR/Sources/OrganoidExplorer/DemoDataset.swift" \
+    "$PACKAGE_DIR/Sources/OrganoidExplorer/MissingMethods.swift" \
     "$PACKAGE_DIR/Sources/OrganoidExplorer/PointCloud.swift" \
     "$PACKAGE_DIR/Sources/OrganoidExplorer/SceneViewer.swift" \
     "$PACKAGE_DIR/Sources/OrganoidExplorer/PlotCellSurfaces.swift" \

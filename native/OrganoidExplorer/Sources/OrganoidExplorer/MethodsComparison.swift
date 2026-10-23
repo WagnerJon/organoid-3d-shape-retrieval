@@ -52,7 +52,7 @@ struct MethodsComparisonView: View {
                         Text("Shape and traditional").tag("Shape and traditional")
                         Text("After size / shape adjustment").tag("Adjusted")
                         Text("All methods").tag("All methods")
-                        if store.level == "Cells" { Text("Validation benchmarks").tag("Validation benchmarks") }
+                        if store.level == "Cells", store.dataset?.syntheticDemo != true { Text("Validation benchmarks").tag("Validation benchmarks") }
                     }.frame(width: 390)
                     Toggle("Same objects across plots", isOn: $commonOnly).toggleStyle(.checkbox)
                         .disabled(comparisonScope == "Validation benchmarks")
@@ -105,8 +105,9 @@ struct MethodsComparisonView: View {
                     .foregroundStyle(.secondary)
             }
             Spacer()
+            MissingMethodsControls(calculation: store.missingMethods)
             VStack(alignment: .trailing, spacing: 5) {
-                Text(store.selectedID ?? "Select a point").font(.headline.monospaced()).foregroundStyle(.teal)
+                Text(store.selected?.displayName ?? "Select a point").font(.headline.monospaced()).foregroundStyle(.teal)
                 Button("Inspect in 3D") { store.activeTab = "explore" }.disabled(store.selected == nil)
             }
         }
@@ -228,6 +229,10 @@ struct MethodsComparisonView: View {
     }
     var explanation: some View {
         VStack(alignment: .leading, spacing: 6) {
+            if store.dataset?.syntheticDemo == true {
+                Text("This demo contains 72 synthetic objects: 12 variations each of Star, Sphere, Ellipsoid, Cactus, Sausage and Donut. All 36 transferable methods were calculated with the existing frozen encoders and descriptors. No models were trained on the shape labels.")
+                Text("Shared colors identify the known shape family; each method's groups are calculated independently. Try volume, sphericity or another feature, replace points with 3D shapes, or open a three-axis plot. Image encoders received generated membrane-like intensities, not real microscopy. Their separation here is not a biological or segmentation benchmark.")
+            } else {
             Text("Learned shape benchmarks compares adapted Allen, pose-averaged Point-MAE and the invariant ShapeEmbedLite3D pilot with traditional features, spatial PCA and spherical harmonics. Dedicated method views include released weights, native-orientation Point-MAE and the Lite3D CNN reference. Raw and adjusted distances match the saved benchmark readouts; display PCA and groups are descriptive fits, not new held-out results.")
             Text(store.dataset?.methods.contains(where: { $0.coverage == "all_cells" }) == true
                  ? "These shape encoders now cover every cell by frozen inference for exploration. Original 609-cell benchmark codes, weights and adjustment fits are preserved. Excluded and QC-flagged cells have codes for review; membership and QC filters still control analyses. These are cell-level codes, not organoid encodings. The separate validation view keeps the 48-cell unquantized CAJAL reference."
@@ -236,6 +241,7 @@ struct MethodsComparisonView: View {
             Text("Coverage refers to the shape benchmark’s split. The sidebar split filter retains Atlas’s original experiment assignments, which can differ from those benchmark assignments.")
             Text("Use the adjusted comparison to ask what remains beyond volume, elongation and sphericity. Both shape and traditional features use the same training-only adjustment. The surface signature is a geometric descriptor; spatial PCA is the learned reconstruction embedding. Separation alone does not demonstrate biological meaning; that needs independent condition or phenotype labels.")
             Text("Validation benchmarks includes the unquantized CAJAL reference for 48 validation cells only. Shared-cell filtering applies to every plot, agreement and neighbor marking. Full-dataset CAJAL is a faster quantized approximation; its neighbors can differ substantially. Check the validation view before interpreting its groups.")
+            }
             Text("Click any point to select the same object in every space. Drag to mark a group, or mark a method’s nearest neighbors and see where they land in the other plots.")
             Text("ARI compares the exploratory partitions, independently of group numbering. Query-neighbor overlap uses each method’s full comparison distance, including ambiguity-aware fallback for spatial PCA. Both respond to your filters. Display projections and cluster fits use main-organoid cells only and are refitted after membership edits; ordinary view filters keep those fits fixed. Pools of 10 or fewer candidates force complete neighbor overlap.")
             Text("PCA axes and explained variance are specific to each method. The ambiguity-aware spatial comparison and direct CAJAL comparisons use distance maps (MDS) and average-linkage groups; positive inertia is not PCA variance. Organoid views average included QC cell descriptors, rather than encoding the entire organoid surface. Rotation, reflection and projection can change the apparent layout. Agreement measures describe consistency between methods, not biological validity.")

@@ -56,7 +56,8 @@ func plotFeatureName(_ key: String) -> String {
     let labels = ["volume_um3":"Volume (µm³)", "surface_area_um2":"Surface area (µm²)", "sphericity":"Sphericity",
                   "elongation":"Elongation", "flatness":"Flatness", "mesh_solidity":"Mesh solidity",
                   "major_axis_um":"Major axis (µm)", "middle_axis_um":"Middle axis (µm)", "minor_axis_um":"Minor axis (µm)",
-                  "centroid_x_um":"Centroid X (µm)", "centroid_y_um":"Centroid Y (µm)", "centroid_z_um":"Centroid Z (µm)", "@cellCount":"Cell count"]
+                  "centroid_x_um":"Centroid X (µm)", "centroid_y_um":"Centroid Y (µm)", "centroid_z_um":"Centroid Z (µm)", "@cellCount":"Cell count",
+                  "demo_shape_class":"Demo shape family", "demo_variant":"Demo variation", "demo_euler_characteristic":"Euler characteristic"]
     return labels[key] ?? key.replacingOccurrences(of: "_", with: " ").capitalized
 }
 
@@ -73,6 +74,7 @@ struct PlotColorMap {
     func color(value: Double?, group: Int) -> NSColor {
         guard !settings.feature.isEmpty else { return settings.palette.groupColor(group) }
         guard let value, value.isFinite, let lo = minimum, let hi = maximum else { return .gray }
+        if settings.feature == "demo_shape_class" { return settings.palette.groupColor(Int(value)) }
         return settings.palette.color(hi > lo ? (value-lo)/(hi-lo) : 0.5)
     }
     func color(item: Specimen, group: Int) -> NSColor { color(value: plotFeatureValue(item, key: settings.feature), group: group) }

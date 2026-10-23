@@ -1,0 +1,29 @@
+{
+  "title": "Organoid Atlas: Interactive visualization and exploratory analysis of 3D cell morphology",
+  "upload_type": "software",
+  "description": "<p><strong>Organoid Atlas</strong> is a native macOS visualizer and organizer for interactive exploration of smaller 3D organoid and cell microscopy datasets. It connects raw image slices, segmented surfaces, measurements and representation spaces for visual inspection, method comparison and scientific rendering.</p>\n<p><strong>Bundled demonstration dataset:</strong> this release includes 72 synthetic 3D objects: 12 variations each of star, sphere, ellipsoid, cactus, sausage and donut, arranged in 12 mixed-shape galleries. Generated membrane-like images, known labels, meshes, measurements and 36 precomputed representation methods are included. Open it using <em>File → Open Demo Dataset</em>; it also opens on first launch when no previous dataset is available. Linked plots, three-axis views and default shape groups are available without installing Python or downloading model weights. Custom analyses require the normal processing environment. The demo is synthetic and is not a biological or segmentation benchmark.</p>\n<p><strong>Main capabilities</strong></p>\n<ul><li>Linked microscopy slices and label overlays, rotatable and sliceable 3D surfaces, and cell- and organoid-level tables.</li><li>Side-by-side PCA and distance-map comparisons, three-axis plots, nearest-neighbor retrieval and exploratory shape grouping.</li><li>Shared feature coloring, selectable palettes, reconstructed cells as plot markers and customizable plot rendering.</li><li>Calculation of missing transferable representations for a loaded dataset using available frozen models; existing measurements and vectors are retained.</li><li>Optional dataset preparation with TIFF, NumPy and OME-Zarr inputs, Cellpose-SAM with u-Segment3D or native Cellpose 3D, PanSeg and FOCUS-3D trials, and distributed Cellpose inference across local Macs.</li><li>Accompanying rendering scripts for morphology UMAPs containing actual 3D surfaces, rotating-cell animations and organoid-to-shape-atlas sequences.</li></ul>\n<p><strong>Analysis methods:</strong> classical morphometry, size- and shape-feature subsets, spherical harmonic descriptors, spatial SDF/PCA features, CAJAL, PointNet++, Point-MAE, ShapeEmbedLite3D, Allen VN-DGCNN/SDF, and image-based SimCLR/IConE representations. Availability for new datasets depends on their source data and installed dependencies; demo results are precomputed.</p>\n<p>This software release targets exploratory research and interactive work with smaller datasets. Processing capacity depends on local memory and storage; distributed workers do not pool RAM. Biological interpretation requires independent validation. Experimental microscopy, model weights, local environments and large research outputs are excluded; the generated synthetic demo is explicitly included. Setup instructions, experiment reports and source code are provided in the repository.</p>",
+  "creators": [
+    {
+      "name": "WagnerJon"
+    }
+  ],
+  "access_right": "open",
+  "license": "cc-by-4.0",
+  "version": "v0.1.5",
+  "keywords": [
+    "3D microscopy",
+    "organoids",
+    "cell morphology",
+    "visualization",
+    "synthetic demo",
+    "shape descriptors",
+    "macOS"
+  ],
+  "related_identifiers": [
+    {
+      "identifier": "https://github.com/WagnerJon/organoid-atlas/tree/v0.1.5",
+      "relation": "isSupplementTo",
+      "resource_type": "software"
+    }
+  ]
+}

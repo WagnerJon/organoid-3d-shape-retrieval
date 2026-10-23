@@ -1,0 +1,625 @@
+[
+  {
+    "id": "traditional",
+    "name": "Traditional morphometry",
+    "metric": "euclidean",
+    "variance": [
+      0.5059278252410486,
+      0.20326039052754513
+    ],
+    "stackVariance": [
+      0.7140048504562707,
+      0.17407227892637872
+    ],
+    "dimensions": 9
+  },
+  {
+    "id": "simclr3d",
+    "name": "Mask SimCLR",
+    "metric": "cosine",
+    "variance": [
+      0.8854222782901987,
+      0.07533868403122383
+    ],
+    "stackVariance": [
+      0.8832689878317955,
+      0.07164032166254077
+    ],
+    "dimensions": 128
+  },
+  {
+    "id": "simclr3d_raw_isolated",
+    "name": "Isolated raw SimCLR",
+    "metric": "cosine",
+    "variance": [
+      0.7758317362480032,
+      0.11506681023653756
+    ],
+    "stackVariance": [
+      0.6913123411460186,
+      0.22535498641349164
+    ],
+    "dimensions": 128
+  },
+  {
+    "id": "simclr3d_raw",
+    "name": "Context raw SimCLR",
+    "metric": "cosine",
+    "variance": [
+      0.8115420791193151,
+      0.12517872458797474
+    ],
+    "stackVariance": [
+      0.9319755106347827,
+      0.054513828547221664
+    ],
+    "dimensions": 128
+  },
+  {
+    "id": "icone3d_raw_isolated",
+    "name": "Isolated raw IConE",
+    "metric": "cosine",
+    "variance": [
+      0.343955474253712,
+      0.20897130262745753
+    ],
+    "stackVariance": [
+      0.30301407227751864,
+      0.25715638765893556
+    ],
+    "dimensions": 128
+  },
+  {
+    "id": "icone3d_raw_context",
+    "name": "Context raw IConE",
+    "metric": "cosine",
+    "variance": [
+      0.2684377892647705,
+      0.17819698207111004
+    ],
+    "stackVariance": [
+      0.5122390778064209,
+      0.2095578355683445
+    ],
+    "dimensions": 128
+  },
+  {
+    "id": "pointnet_shape128",
+    "name": "Surface PointNet++ \u00b7 128D",
+    "metric": "cosine",
+    "dimensions": 128,
+    "variance": [
+      0.8156679720983931,
+      0.11282892179829195
+    ],
+    "stackVariance": [
+      0.775330439822863,
+      0.15529564685452174
+    ]
+  },
+  {
+    "id": "spatial_robust",
+    "name": "Spatial PCA \u00b7 ambiguity fallback",
+    "metric": "shape_hybrid95",
+    "dimensions": 476,
+    "variance": [
+      0.4739123254874429,
+      0.14220483591045702
+    ],
+    "stackVariance": [
+      0.0,
+      0.0
+    ],
+    "family": "shape",
+    "description": "Frozen 95D spatial PCA in four proper sign frames. If either cell has an axis gap < 0.05, distance uses an independent rotation-invariant surface signature, scaled on training cells. MDS depicts these mixed distances; average-linkage groups. The fallback discards chirality and cannot distinguish all shapes. Cell-level only.",
+    "projection": "mds"
+  },
+  {
+    "id": "surface_signature",
+    "name": "Surface signature \u00b7 95D",
+    "metric": "euclidean",
+    "dimensions": 95,
+    "variance": [
+      0.7919764971544564,
+      0.10527566245640284
+    ],
+    "stackVariance": [
+      0.7845458947066098,
+      0.13171072187634894
+    ],
+    "family": "shape",
+    "description": "Geometric descriptor, not a neural encoder: surface radial and pair-distance quantiles, compressed by PCA fitted on the original 96 training cells. Rotation invariant for rigid transforms of the same mesh; sensitive to remeshing and discards chirality.",
+    "projection": "pca"
+  },
+  {
+    "id": "surface_signature_adjusted",
+    "name": "Surface signature \u00b7 adjusted",
+    "metric": "euclidean",
+    "dimensions": 95,
+    "variance": [
+      0.6490483280273949,
+      0.34522017218321127
+    ],
+    "stackVariance": [
+      0.5788187033378476,
+      0.2730063395751531
+    ],
+    "family": "shape",
+    "description": "Surface signature after degree-2 Ridge adjustment for log volume, elongation and sphericity fitted only on the original 96 training cells. Residualization does not guarantee biological independence.",
+    "projection": "pca"
+  },
+  {
+    "id": "spatial_adjusted",
+    "name": "Spatial PCA \u00b7 adjusted summary",
+    "metric": "euclidean",
+    "dimensions": 190,
+    "variance": [
+      0.9403564646951703,
+      0.05591670646570315
+    ],
+    "stackVariance": [
+      0.3921613162163196,
+      0.20757417272340717
+    ],
+    "family": "shape",
+    "description": "Mean/std over the four spatial PCA frames, adjusted for log volume, elongation and sphericity using training-only degree-2 Ridge. This pooled view has no ambiguity fallback and can remain alignment-sensitive in near-spherical cells.",
+    "projection": "pca"
+  },
+  {
+    "id": "morph_controls",
+    "name": "Volume + elongation + sphericity",
+    "metric": "euclidean",
+    "dimensions": 3,
+    "variance": [
+      0.5495726028319562,
+      0.3728194775158605
+    ],
+    "stackVariance": [
+      0.608780995916578,
+      0.22593885663964225
+    ],
+    "family": "traditional",
+    "description": "Training-standardized features: volume_um3, sphericity, elongation. Positive size measures are log transformed.",
+    "projection": "pca"
+  },
+  {
+    "id": "morph_size",
+    "name": "Size features",
+    "metric": "euclidean",
+    "dimensions": 5,
+    "variance": [
+      0.9440434417949274,
+      0.039393168250494465
+    ],
+    "stackVariance": [
+      0.9028973165425676,
+      0.05414097810263053
+    ],
+    "family": "traditional",
+    "description": "Training-standardized features: volume_um3, surface_area_um2, major_axis_um, middle_axis_um, minor_axis_um. Positive size measures are log transformed.",
+    "projection": "pca"
+  },
+  {
+    "id": "morph_shape",
+    "name": "Shape features",
+    "metric": "euclidean",
+    "dimensions": 4,
+    "variance": [
+      0.46161871142983774,
+      0.35638722490868213
+    ],
+    "stackVariance": [
+      0.499966228746331,
+      0.4009036652040483
+    ],
+    "family": "traditional",
+    "description": "Training-standardized features: sphericity, elongation, flatness, mesh_solidity. Positive size measures are log transformed.",
+    "projection": "pca"
+  },
+  {
+    "id": "morph_all",
+    "name": "All 9 traditional features",
+    "metric": "euclidean",
+    "dimensions": 9,
+    "variance": [
+      0.5530517230977243,
+      0.24578921591044955
+    ],
+    "stackVariance": [
+      0.46050071941871584,
+      0.2871767538017298
+    ],
+    "family": "traditional",
+    "description": "Training-standardized features: volume_um3, surface_area_um2, sphericity, elongation, flatness, mesh_solidity, major_axis_um, middle_axis_um, minor_axis_um. Positive size measures are log transformed.",
+    "projection": "pca"
+  },
+  {
+    "id": "morph_adjusted",
+    "name": "All 9 traditional \u00b7 adjusted",
+    "metric": "euclidean",
+    "dimensions": 9,
+    "variance": [
+      0.9723353226516361,
+      0.02678325649089674
+    ],
+    "stackVariance": [
+      0.9109822905113618,
+      0.06158742304787886
+    ],
+    "family": "traditional",
+    "description": "Identical training-only degree-2 Ridge adjustment for log volume, elongation and sphericity as the shape comparisons. Residual features need not be independent of these measurements.",
+    "projection": "pca"
+  },
+  {
+    "id": "spherical_harmonics",
+    "name": "Spherical harmonics \u00b7 shell spectrum",
+    "dimensions": 416,
+    "metric": "euclidean",
+    "projection": "pca",
+    "family": "shape",
+    "description": "Rotation-invariant spherical-shell harmonic powers: 32 radial shells, degrees 0\u201312, soft occupancy sampled from the original mesh. Exact surface centroid/RMS-radius normalization removes position and scale. Independent implementation of the shell-spectrum construction, not SPHARM-PDM. Finite quadrature produces small rotation errors; phase and chirality are lost.",
+    "variance": [
+      0.5148512207034953,
+      0.10387189999112692
+    ],
+    "stackVariance": [
+      0.47425743041825463,
+      0.18530471117927264
+    ]
+  },
+  {
+    "id": "spherical_harmonics_adjusted",
+    "name": "Spherical harmonics \u00b7 adjusted",
+    "dimensions": 416,
+    "metric": "euclidean",
+    "projection": "pca",
+    "family": "shape",
+    "description": "Shell harmonic spectrum after the same training-only degree-2 Ridge adjustment for log volume, elongation and sphericity used by traditional and spatial features. Adjustment is fitted on the original 96 training cells; residuals are not guaranteed independent of controls.",
+    "variance": [
+      0.8239146065609003,
+      0.17001906384761073
+    ],
+    "stackVariance": [
+      0.44865382095590767,
+      0.21831439241213274
+    ]
+  },
+  {
+    "id": "cajal_qgw",
+    "name": "CAJAL \u00b7 quantized GW",
+    "dimensions": 1089,
+    "metric": "precomputed",
+    "projection": "mds",
+    "family": "shape",
+    "description": "Official CAJAL 2.0.3 quantized Gromov\u2013Wasserstein comparison, 128 area-sampled surface points, 32 clusters, Euclidean distances within each cell. Position, scale and orientation (including reflections) removed. Cached pairwise distances drive neighbors and MDS; packed rows are not embedding coordinates. Average-linkage groups; cell-level only. Approximation, sampling and solver local minima affect rankings.",
+    "variance": [
+      0.02435631297566667,
+      0.008123319869549757
+    ],
+    "stackVariance": [
+      0.0,
+      0.0
+    ]
+  },
+  {
+    "id": "cajal_profile_adjusted",
+    "name": "CAJAL \u00b7 adjusted landmark profile",
+    "dimensions": 96,
+    "metric": "euclidean",
+    "projection": "pca",
+    "family": "shape",
+    "description": "Distances to the original 96 training cells form a landmark profile, then receive the identical training-only volume/elongation/sphericity adjustment. Euclidean profile distance is an approximation and is not the direct CAJAL GW distance. Organoid plots average included QC cell profiles.",
+    "variance": [
+      0.7883731509698519,
+      0.19739488474694555
+    ],
+    "stackVariance": [
+      0.06929253561854479,
+      0.05549697303015517
+    ]
+  },
+  {
+    "id": "allen_pretrained_raw",
+    "name": "Allen VN-DGCNN \u00b7 released \u00b7 raw",
+    "dimensions": 512,
+    "metric": "euclidean",
+    "projection": "pca",
+    "family": "allen",
+    "scope": "cells",
+    "coverage": "all_cells",
+    "description": "512 vector-channel norms from the released VN-DGCNN/SDF encoder. Released NPM1 weights; no local encoder adaptation. Frozen inference on all cells for exploration, including excluded/QC-flagged cells for review. Original 609 benchmark codes preserved; no retraining. Analysis membership and QC filters still apply.",
+    "variance": [
+      0.1726637336955948,
+      0.1123829287595213
+    ],
+    "stackVariance": [
+      0.0,
+      0.0
+    ]
+  },
+  {
+    "id": "allen_pretrained_adjusted",
+    "name": "Allen VN-DGCNN \u00b7 released \u00b7 adjusted",
+    "dimensions": 512,
+    "metric": "euclidean",
+    "projection": "pca",
+    "family": "allen",
+    "scope": "cells",
+    "coverage": "all_cells",
+    "description": "512 vector-channel norms from the released VN-DGCNN/SDF encoder. Released NPM1 weights; no local encoder adaptation. Frozen inference on all cells for exploration, including excluded/QC-flagged cells for review. Original 609 benchmark codes preserved; no retraining. Analysis membership and QC filters still apply. Standardized and residualized for log volume, elongation and sphericity using the original fixed 96 training-cell fit; no refitting.",
+    "variance": [
+      0.7833780791214945,
+      0.19360537245296885
+    ],
+    "stackVariance": [
+      0.0,
+      0.0
+    ]
+  },
+  {
+    "id": "allen_head_decoder_raw",
+    "name": "Allen VN-DGCNN \u00b7 head adapted \u00b7 raw",
+    "dimensions": 512,
+    "metric": "euclidean",
+    "projection": "pca",
+    "family": "allen",
+    "scope": "cells",
+    "coverage": "all_cells",
+    "description": "512 vector-channel norms from the released VN-DGCNN/SDF encoder. Only the final encoder head and SDF decoder were adapted; the backbone stayed frozen. Frozen inference on all cells for exploration, including excluded/QC-flagged cells for review. Original 609 benchmark codes preserved; no retraining. Analysis membership and QC filters still apply.",
+    "variance": [
+      0.1699411463077601,
+      0.1101179249212671
+    ],
+    "stackVariance": [
+      0.0,
+      0.0
+    ]
+  },
+  {
+    "id": "allen_head_decoder_adjusted",
+    "name": "Allen VN-DGCNN \u00b7 head adapted \u00b7 adjusted",
+    "dimensions": 512,
+    "metric": "euclidean",
+    "projection": "pca",
+    "family": "allen",
+    "scope": "cells",
+    "coverage": "all_cells",
+    "description": "512 vector-channel norms from the released VN-DGCNN/SDF encoder. Only the final encoder head and SDF decoder were adapted; the backbone stayed frozen. Frozen inference on all cells for exploration, including excluded/QC-flagged cells for review. Original 609 benchmark codes preserved; no retraining. Analysis membership and QC filters still apply. Standardized and residualized for log volume, elongation and sphericity using the original fixed 96 training-cell fit; no refitting.",
+    "variance": [
+      0.7872523660747633,
+      0.18985486548427666
+    ],
+    "stackVariance": [
+      0.0,
+      0.0
+    ]
+  },
+  {
+    "id": "point_mae_pretrained_pose_average_raw",
+    "name": "Point-MAE \u00b7 released \u00b7 pose averaged \u00b7 raw",
+    "dimensions": 768,
+    "metric": "euclidean",
+    "projection": "pca",
+    "family": "point_mae",
+    "scope": "cells",
+    "coverage": "all_cells",
+    "description": "768D mean/max token descriptor. External surface-PCA pose handling averages four proper sign frames; ambiguous axes can affect results. This is not an intrinsically rotation-invariant encoder. Masked patch completion is not reconstruction from this global descriptor. Frozen inference on all cells for exploration, including excluded/QC-flagged cells for review. Original 609 benchmark codes preserved; no retraining. Analysis membership and QC filters still apply.",
+    "variance": [
+      0.3816684827818001,
+      0.08922629053242824
+    ],
+    "stackVariance": [
+      0.0,
+      0.0
+    ]
+  },
+  {
+    "id": "point_mae_pretrained_pose_average_adjusted",
+    "name": "Point-MAE \u00b7 released \u00b7 pose averaged \u00b7 adjusted",
+    "dimensions": 768,
+    "metric": "euclidean",
+    "projection": "pca",
+    "family": "point_mae",
+    "scope": "cells",
+    "coverage": "all_cells",
+    "description": "768D mean/max token descriptor. External surface-PCA pose handling averages four proper sign frames; ambiguous axes can affect results. This is not an intrinsically rotation-invariant encoder. Masked patch completion is not reconstruction from this global descriptor. Frozen inference on all cells for exploration, including excluded/QC-flagged cells for review. Original 609 benchmark codes preserved; no retraining. Analysis membership and QC filters still apply. Standardized and residualized for log volume, elongation and sphericity using the original fixed 96 training-cell fit; no refitting.",
+    "variance": [
+      0.8786161836216644,
+      0.11052749346905767
+    ],
+    "stackVariance": [
+      0.0,
+      0.0
+    ]
+  },
+  {
+    "id": "point_mae_pretrained_native_raw",
+    "name": "Point-MAE \u00b7 released \u00b7 native orientation \u00b7 raw",
+    "dimensions": 768,
+    "metric": "euclidean",
+    "projection": "pca",
+    "family": "point_mae",
+    "scope": "cells",
+    "coverage": "all_cells",
+    "description": "768D mean/max token descriptor. Native orientation reference: sensitive to object rotation. Masked patch completion is not reconstruction from this global descriptor. Frozen inference on all cells for exploration, including excluded/QC-flagged cells for review. Original 609 benchmark codes preserved; no retraining. Analysis membership and QC filters still apply.",
+    "variance": [
+      0.15528659674166567,
+      0.07857366573300457
+    ],
+    "stackVariance": [
+      0.0,
+      0.0
+    ]
+  },
+  {
+    "id": "point_mae_pretrained_native_adjusted",
+    "name": "Point-MAE \u00b7 released \u00b7 native orientation \u00b7 adjusted",
+    "dimensions": 768,
+    "metric": "euclidean",
+    "projection": "pca",
+    "family": "point_mae",
+    "scope": "cells",
+    "coverage": "all_cells",
+    "description": "768D mean/max token descriptor. Native orientation reference: sensitive to object rotation. Masked patch completion is not reconstruction from this global descriptor. Frozen inference on all cells for exploration, including excluded/QC-flagged cells for review. Original 609 benchmark codes preserved; no retraining. Analysis membership and QC filters still apply. Standardized and residualized for log volume, elongation and sphericity using the original fixed 96 training-cell fit; no refitting.",
+    "variance": [
+      0.8205716947130474,
+      0.16252248548278894
+    ],
+    "stackVariance": [
+      0.0,
+      0.0
+    ]
+  },
+  {
+    "id": "point_mae_adapted_pose_average_raw",
+    "name": "Point-MAE \u00b7 adapted \u00b7 pose averaged \u00b7 raw",
+    "dimensions": 768,
+    "metric": "euclidean",
+    "projection": "pca",
+    "family": "point_mae",
+    "scope": "cells",
+    "coverage": "all_cells",
+    "description": "768D mean/max token descriptor. External surface-PCA pose handling averages four proper sign frames; ambiguous axes can affect results. This is not an intrinsically rotation-invariant encoder. Masked patch completion is not reconstruction from this global descriptor. Frozen inference on all cells for exploration, including excluded/QC-flagged cells for review. Original 609 benchmark codes preserved; no retraining. Analysis membership and QC filters still apply.",
+    "variance": [
+      0.46373570307716355,
+      0.055308048922448984
+    ],
+    "stackVariance": [
+      0.0,
+      0.0
+    ]
+  },
+  {
+    "id": "point_mae_adapted_pose_average_adjusted",
+    "name": "Point-MAE \u00b7 adapted \u00b7 pose averaged \u00b7 adjusted",
+    "dimensions": 768,
+    "metric": "euclidean",
+    "projection": "pca",
+    "family": "point_mae",
+    "scope": "cells",
+    "coverage": "all_cells",
+    "description": "768D mean/max token descriptor. External surface-PCA pose handling averages four proper sign frames; ambiguous axes can affect results. This is not an intrinsically rotation-invariant encoder. Masked patch completion is not reconstruction from this global descriptor. Frozen inference on all cells for exploration, including excluded/QC-flagged cells for review. Original 609 benchmark codes preserved; no retraining. Analysis membership and QC filters still apply. Standardized and residualized for log volume, elongation and sphericity using the original fixed 96 training-cell fit; no refitting.",
+    "variance": [
+      0.8572812563498943,
+      0.13065536326578966
+    ],
+    "stackVariance": [
+      0.0,
+      0.0
+    ]
+  },
+  {
+    "id": "point_mae_adapted_native_raw",
+    "name": "Point-MAE \u00b7 adapted \u00b7 native orientation \u00b7 raw",
+    "dimensions": 768,
+    "metric": "euclidean",
+    "projection": "pca",
+    "family": "point_mae",
+    "scope": "cells",
+    "coverage": "all_cells",
+    "description": "768D mean/max token descriptor. Native orientation reference: sensitive to object rotation. Masked patch completion is not reconstruction from this global descriptor. Frozen inference on all cells for exploration, including excluded/QC-flagged cells for review. Original 609 benchmark codes preserved; no retraining. Analysis membership and QC filters still apply.",
+    "variance": [
+      0.18634940698819416,
+      0.07546493957079577
+    ],
+    "stackVariance": [
+      0.0,
+      0.0
+    ]
+  },
+  {
+    "id": "point_mae_adapted_native_adjusted",
+    "name": "Point-MAE \u00b7 adapted \u00b7 native orientation \u00b7 adjusted",
+    "dimensions": 768,
+    "metric": "euclidean",
+    "projection": "pca",
+    "family": "point_mae",
+    "scope": "cells",
+    "coverage": "all_cells",
+    "description": "768D mean/max token descriptor. Native orientation reference: sensitive to object rotation. Masked patch completion is not reconstruction from this global descriptor. Frozen inference on all cells for exploration, including excluded/QC-flagged cells for review. Original 609 benchmark codes preserved; no retraining. Analysis membership and QC filters still apply. Standardized and residualized for log volume, elongation and sphericity using the original fixed 96 training-cell fit; no refitting.",
+    "variance": [
+      0.8057143706869178,
+      0.17543588180416317
+    ],
+    "stackVariance": [
+      0.0,
+      0.0
+    ]
+  },
+  {
+    "id": "shapeembed3d_invariant_raw",
+    "name": "ShapeEmbedLite3D \u00b7 invariant \u00b7 raw",
+    "dimensions": 128,
+    "metric": "euclidean",
+    "projection": "pca",
+    "family": "shapeembed3d",
+    "scope": "cells",
+    "coverage": "all_cells",
+    "description": "Experimental unofficial 128D VAE latent mean, adapted from ShapeEmbedLite. Permutation-invariant EDM graph encoder; O(3) invariance includes reflections, so chirality is lost. Sparse global point reconstructions remain generic; no geometry improvement is established. Frozen inference on all cells for exploration, including excluded/QC-flagged cells for review. Original 609 benchmark codes preserved; no retraining. Analysis membership and QC filters still apply.",
+    "variance": [
+      0.6261906730373821,
+      0.18326428774944567
+    ],
+    "stackVariance": [
+      0.0,
+      0.0
+    ]
+  },
+  {
+    "id": "shapeembed3d_invariant_adjusted",
+    "name": "ShapeEmbedLite3D \u00b7 invariant \u00b7 adjusted",
+    "dimensions": 128,
+    "metric": "euclidean",
+    "projection": "pca",
+    "family": "shapeembed3d",
+    "scope": "cells",
+    "coverage": "all_cells",
+    "description": "Experimental unofficial 128D VAE latent mean, adapted from ShapeEmbedLite. Permutation-invariant EDM graph encoder; O(3) invariance includes reflections, so chirality is lost. Sparse global point reconstructions remain generic; no geometry improvement is established. Frozen inference on all cells for exploration, including excluded/QC-flagged cells for review. Original 609 benchmark codes preserved; no retraining. Analysis membership and QC filters still apply. Standardized and residualized for log volume, elongation and sphericity using the original fixed 96 training-cell fit; no refitting.",
+    "variance": [
+      0.9176804053844456,
+      0.0739513859411405
+    ],
+    "stackVariance": [
+      0.0,
+      0.0
+    ]
+  },
+  {
+    "id": "shapeembed3d_cnn_raw",
+    "name": "ShapeEmbedLite3D \u00b7 CNN reference \u00b7 raw",
+    "dimensions": 128,
+    "metric": "euclidean",
+    "projection": "pca",
+    "family": "shapeembed3d",
+    "scope": "cells",
+    "coverage": "all_cells",
+    "description": "Experimental unofficial 128D VAE latent mean, adapted from ShapeEmbedLite. Literal CNN reference on distance matrices; sensitive to point indexing. Sparse global point reconstructions remain generic; no geometry improvement is established. Frozen inference on all cells for exploration, including excluded/QC-flagged cells for review. Original 609 benchmark codes preserved; no retraining. Analysis membership and QC filters still apply.",
+    "variance": [
+      0.883397240016085,
+      0.09652406851080313
+    ],
+    "stackVariance": [
+      0.0,
+      0.0
+    ]
+  },
+  {
+    "id": "shapeembed3d_cnn_adjusted",
+    "name": "ShapeEmbedLite3D \u00b7 CNN reference \u00b7 adjusted",
+    "dimensions": 128,
+    "metric": "euclidean",
+    "projection": "pca",
+    "family": "shapeembed3d",
+    "scope": "cells",
+    "coverage": "all_cells",
+    "description": "Experimental unofficial 128D VAE latent mean, adapted from ShapeEmbedLite. Literal CNN reference on distance matrices; sensitive to point indexing. Sparse global point reconstructions remain generic; no geometry improvement is established. Frozen inference on all cells for exploration, including excluded/QC-flagged cells for review. Original 609 benchmark codes preserved; no retraining. Analysis membership and QC filters still apply. Standardized and residualized for log volume, elongation and sphericity using the original fixed 96 training-cell fit; no refitting.",
+    "variance": [
+      0.7569741065857958,
+      0.2332828114338297
+    ],
+    "stackVariance": [
+      0.0,
+      0.0
+    ]
+  }
+]

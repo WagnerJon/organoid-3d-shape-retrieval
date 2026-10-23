@@ -1,16 +1,94 @@
 # Organoid Atlas — native macOS experiment explorer
 
+## Built-in demo
+
+Use **Open Demo Dataset** in the toolbar, opening screen or File menu (⇧⌘D).
+The demo also opens on first launch when no previous dataset is available.
+It contains **72 synthetic objects**: 12 variations each of Star, Sphere,
+Ellipsoid, Cactus, Sausage and Donut, arranged in 12 mixed-shape galleries.
+All **36 transferable representations** are precomputed using the existing
+frozen methods, including traditional controls, harmonics, spatial PCA,
+PointNet++, ShapeEmbedLite3D, Point-MAE, Allen, SimCLR/IConE and CAJAL.
+
+Meshes, generated membrane images, known labels, physical measurements and
+PointNet reconstructions are bundled with the app. Plot selection, tables,
+linked 3D views, feature colors, full-screen plots, three-axis projections and
+default shape discovery work without downloading models or installing Python.
+Custom group settings, filtered refits and newly calculated analyses require the
+normal analysis environment. Known shape families supply optional colors only;
+the methods' clusters are calculated from their actual descriptors.
+
+The demo is synthetic, uses nominal physical units, and does not validate model
+accuracy or biological interpretation. It opens as a writable versioned copy in
+Application Support; edits never modify the bundled original. Reopening preserves
+that copy. An existing user dataset remains the normal startup selection.
+
+The portable resource is `Resources/DemoShapes.atlasdemo`, a ZIP archive with
+per-file hashes. Regenerate it with `scripts/generate_atlas_demo.py generate`,
+run `scripts/atlas_missing_methods.py run` on the generated folder, then use the
+generator's `package` operation. Model weights and inference caches are excluded
+from the archive. Building from the checked-in resource needs no model files.
+
+## Complete representations for a loaded dataset
+
+In **Compare Methods**, choose **Calculate missing methods**. Atlas checks all
+cells in the loaded experiment, independent of the current plots and filters,
+and fills missing representations using the existing frozen encoders. Available
+families include traditional feature controls, spatial PCA, spherical harmonics,
+PointNet++, ShapeEmbedLite3D, Point-MAE, Allen VN-DGCNN, SimCLR/IConE and quantized
+CAJAL. The original cohort-specific CAJAL validation reference is not transferable.
+
+Families run sequentially with progress, Stop, persistent caches and automatic
+plot refresh. Successful families are saved immediately; rerun the button after
+an interruption. Existing cell vectors, measurements, meshes and membership
+decisions are retained. New plot fits and organoid means use included cells;
+organoid representation means use QC-passing included cells. Cell-only methods
+remain cell-only. No encoders are trained. CAJAL's pairwise calculation can take
+considerably longer on larger datasets.
+
+The result panel lists missing model/reference files, unavailable original raw
+images or processing grids, and failed families. Frozen intensity encoders need
+the original processing files and a memory-mappable 3D TIFF, not the viewer's
+preview image. Caches, provenance and dataset backups are stored in
+`.atlas-methods` inside the experiment folder. Input edits during calculation
+stop publication rather than overwrite a changed dataset.
+
 ## Prepare raw images
+
+**Native Cellpose 3D:** choose **3D segmentation → Native Cellpose 3D** in
+dataset preparation or either Cellpose A/B panel. This runs Cellpose's
+`do_3D=True` orthoview prediction and 3D mask dynamics, bypassing u-Segment3D
+linking. Controls include 3D flow smoothing (processed pixels), cell-probability
+threshold and minimum cell size (processed voxels). Atlas already resamples
+using voxel calibration, so Cellpose receives an isotropic grid with
+`anisotropy=1`; the raw Z/XY ratio is not applied twice. On Apple Silicon,
+network prediction can use MPS while Cellpose's 3D mask formation uses CPU.
+The 2D flow threshold does not affect native 3D masks. Single-slice tests remain
+2D and do not predict the outcome of 3D dynamics.
+
+Use **Compare Cellpose with → Cellpose model / 3D mode** to compare native
+Cellpose 3D against u-Segment3D with the same model, or select different models
+on each side. Run history and comparison headings retain the chosen mode.
+Native 3D preparation keeps memory checks, cancellation, stage checkpoints,
+calibrated measurements and meshes. Complete stacks can be assigned to paired
+Macs; distributed plane batches and streamed u-Segment3D linking are unavailable
+in this mode. Native Cellpose retains whole-volume arrays in memory, so start
+at a modest processing scale on a 16 GB Mac. This is an additional method to
+evaluate, not an established improvement in segmentation accuracy.
 
 Choose **New Dataset…** from the opening screen, toolbar or File menu (⌘N).
 Add one or more single-channel Z/Y/X TIFF or NumPy (`.npy`) stacks, confirm each stack's voxel
 spacing in µm, choose Cellpose `cpsam_v2`, `cpdino` or `cpdino-vitb`, and select
 a new results folder. Existing integer label TIFFs can replace segmentation for
 individual stacks. OME and ImageJ calibration are suggested when available;
-missing calibration defaults to 1 × 1 × 1 µm and is labeled as a default; edit it if known.
+missing calibration defaults to **Assume cubic stack**: X = Y = 1 and
+Z = max(image width, image height) / slice count. Only Z changes; rectangular
+images retain their XY aspect ratio. This is an explicit geometry estimate in
+nominal µm, not measured physical calibration; edit it if known. Existing
+calibration and saved preparation settings are preserved.
 
 NumPy imports accept numeric 3D arrays in Z/Y/X order, including the BlastoSPIM2
-image stacks. They contain no embedded voxel spacing: Atlas starts with 1 × 1 × 1 µm; edit
+image stacks. They contain no embedded voxel spacing: Atlas estimates cubic-stack depth as above; edit
 the Z/Y/X values if known and confirm the axis interpretation. Slice previews read only the selected plane
 through a read-only memory map. Preparation streams a calibrated TIFF cache into
 the results folder for local and multi-Mac processing, retaining the original

@@ -55,7 +55,7 @@ def compute_slot():
 
 def engine():
     from importlib.metadata import version,PackageNotFoundError
-    files=['run_standalone_cellpose.py','qc_standalone_cellpose.py','prepare_atlas_dataset.py','atlas_worker.py','atlas_inference_batches.py','atlas_preprocessing.py','atlas_ome_zarr.py','atlas_numpy.py','atlas_streamed_linking.py','atlas_streaming_core.py']
+    files=['run_standalone_cellpose.py','qc_standalone_cellpose.py','prepare_atlas_dataset.py','atlas_worker.py','atlas_inference_batches.py','atlas_preprocessing.py','atlas_ome_zarr.py','atlas_numpy.py','atlas_calibration.py','atlas_cellpose_3d.py','atlas_streamed_linking.py','atlas_streaming_core.py']
     h=hashlib.sha256()
     for name in files:h.update((name+sha(ROOT/'scripts'/name)).encode())
     for path in sorted((ROOT/'vendor/u-segment3D/segment3D').rglob('*.py')):
@@ -131,6 +131,9 @@ class WorkerState:
         if spec.get('kind','stack') not in ('stack','inference-batch'):raise ValueError('Unsupported job kind')
         if spec.get('kind')=='inference-batch' and labels:raise ValueError('Batch jobs do not accept labels')
         spacing=spec['spacing'];settings=spec['settings']
+        from atlas_cellpose_3d import settings as native_settings
+        native=native_settings(settings)
+        if spec.get('kind')=='inference-batch' and native['segmentationMode']=='cellpose3d':raise ValueError('Native Cellpose 3D requires a complete stack, not plane batches.')
         from math import isfinite
         if len(spacing)!=3 or not all(isinstance(x,(int,float)) and isfinite(x) and x>0 for x in spacing):raise ValueError('Invalid spacing')
         if settings.get('model') not in ('cpsam_v2','cpdino','cpdino-vitb') or not .05<=float(settings['scale'])<=1 or not 2<=float(settings['diameter'])<=500:raise ValueError('Invalid segmentation settings')

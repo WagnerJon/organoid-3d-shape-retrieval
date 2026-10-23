@@ -39,6 +39,8 @@ Blue: query. Orange: each method’s nearest segmented cell, aligned for display
 
 **[Organoid Atlas](native/OrganoidExplorer/README.md)** is the native macOS viewer and organizer for these experiments: linked plots, tables, raw slices, 3D surfaces and side-by-side shape comparisons. It also provides segmentation trials with Cellpose models, PanSeg and FOCUS-3D.
 
+**No data yet? Open the bundled demo** from **File → Open Demo Dataset**. It includes 72 synthetic objects—12 variations each of star, sphere, ellipsoid, cactus, sausage and donut—with 36 precomputed representation methods, image slices and 3D surfaces. Linked plots, three-axis views and default shape groups work without downloading models or installing Python. [Demo and setup](native/OrganoidExplorer/README.md#built-in-demo).
+
 ![Organoid Atlas: linked plots, 3D cells and microscopy slices](docs/figures/organoid_atlas.png)
 
 Example viewer screenshot; plot groups are exploratory, not biological classes.
@@ -49,4 +51,4 @@ Use a second Apple Silicon Mac as an **Atlas Worker** on the same network. Pair 
 
 [Reproduce the pipeline](docs/REPRODUCIBILITY.md) · [Original experiment report](docs/REPORT.md) · [Data and artifacts](docs/DATA.md) · [Full-data representations](docs/ATLAS_FULL_DATA_SHAPES.md)
 
-Code, configurations, tests and selected figures are included. Raw stacks, masks, model weights and large outputs stay outside the repository. Physical calibration is inferred; independent biological specimen identities are unavailable.
+Code, configurations, tests, selected figures and the synthetic demo are included. Experimental raw stacks, masks, model weights and large research outputs stay outside the repository. Physical calibration of the experimental data is inferred; independent biological specimen identities are unavailable.

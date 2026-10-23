@@ -10,6 +10,24 @@ from segmentation_explorer import prepare,run,compare
 
 
 class CellposeModelComparisonTests(unittest.TestCase):
+    def test_same_model_can_compare_native_3d_with_usegment3d(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);raw=np.ones((6,8,8),np.uint16)
+            path=root/'raw.tif';tifffile.imwrite(path,raw,metadata={'axes':'ZYX'},photometric='minisblack')
+            source=prepare(path,[1,.5,.5],root/'source')
+            labels=np.zeros(raw.shape,np.uint32);labels[:,2:6,2:6]=1
+            runs=[]
+            for side,mode in [('A','usegment3d'),('B','cellpose3d')]:
+                def predict(path,config,folder,progress=None):
+                    self.assertEqual(config['segmentationMode'],mode)
+                    self.assertEqual(config['flow3DSmooth'],1.5)
+                    return raw,labels,[1,.5,.5]
+                with patch('reconstruct.predict',side_effect=predict):
+                    runs.append(run(source,'cellpose',dict(model='cpsam_v2',scale=.5,diameter=20,gpu=False,background=False,segmentationMode=mode,flow3DSmooth=1.5),root/side,comparison_side=side))
+            self.assertEqual([r['cellposeMode'] for r in runs],['usegment3d','cellpose3d'])
+            self.assertEqual([r['cellposeModel'] for r in runs],['cpsam_v2']*2)
+            self.assertEqual(compare(*runs,source)['matched'],1)
+
     def test_model_dispatch_and_native_grid_comparison(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

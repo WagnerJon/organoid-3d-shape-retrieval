@@ -215,7 +215,7 @@ def pointnet(frame):
     npz(destination, ids=frame.cell_id.to_numpy(dtype=str), codes=np.asarray(codes), paths=np.asarray(reconstructions))
 
 
-def image_inputs(frame):
+def image_inputs(frame, sources=None):
     """Bounded raw windows with physical coordinates; masks stay disk-backed."""
     from scipy import ndimage
     from skimage.transform import resize
@@ -231,13 +231,16 @@ def image_inputs(frame):
     arrays = {name: np.lib.format.open_memmap(target/f'{name}.npy', mode='w+', dtype='u1' if name=='mask' else 'f4', shape=(n, 64, 64, 64)) for name in ['mask', 'context', 'isolated']}
     notes = []
     for sample, group in frame.groupby('sample', sort=False):
-        number = int(sample.rsplit('MV', 1)[1])
-        run = JOINT/'organoids'/f'MV{number}'
+        if sources is None:
+            number = int(sample.rsplit('MV', 1)[1])
+            run = JOINT/'organoids'/f'MV{number}'
+        else:
+            run = Path(sources[sample]['run'])
         config = json.loads((run/'run.json').read_text())
         native_spacing = np.array(config['spacingZYXum'])
         spacing = np.array(json.loads((run/'processing.json').read_text())['effectiveSpacingZYXum'])
         labels = np.load(run/'labels_processed.npy', mmap_mode='r')
-        raw_path = JOINT/'raw'/Path(config['source']).name
+        raw_path = JOINT/'raw'/Path(config['source']).name if sources is None else Path(sources[sample]['raw'])
         raw = tifffile.memmap(raw_path, mode='r')
         # Exact native-stack percentiles, with a temporary disk-backed float32
         # work array to avoid a multi-gigabyte RAM copy during normalization.

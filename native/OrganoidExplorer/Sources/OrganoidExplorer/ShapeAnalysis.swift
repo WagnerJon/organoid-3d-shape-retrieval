@@ -30,7 +30,14 @@ enum ShapeAnalysis {
     static func run(folder: URL, method: String, level: String, action: String,
                     ids: [String]? = nil, minimum: Int = 10, samples: Int = 5,
                     selection: String = "eom", allowSingle: Bool = false) async throws -> ShapeAnalysisResult {
+        if let cached = try DemoDataset.cachedAnalysis(folder: folder, method: method, level: level, action: action,
+                                                       ids: ids, minimum: minimum, samples: samples, selection: selection, allowSingle: allowSingle) {
+            return cached
+        }
         let root = URL(fileURLWithPath: Bundle.main.object(forInfoDictionaryKey: "ExplorerProjectPath") as? String ?? FileManager.default.currentDirectoryPath)
+        guard FileManager.default.isExecutableFile(atPath: root.appendingPathComponent(".venv/bin/python").path) else {
+            throw DataError.invalid("The demo includes three-axis plots and default groups for the full gallery. Custom groups or filtered analyses need the Atlas analysis tools installed.")
+        }
         return try await Task.detached(priority: .userInitiated) {
             let temporary = FileManager.default.temporaryDirectory.appendingPathComponent("atlas-shape-" + UUID().uuidString)
             try FileManager.default.createDirectory(at: temporary, withIntermediateDirectories: true)

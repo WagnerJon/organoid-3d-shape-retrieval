@@ -23,6 +23,8 @@ struct Specimen: Codable, Identifiable {
     let metrics: [String: Double]
     let representations: [String: Representation]
     let cellCount: Int?
+    var name: String? = nil
+    var displayName: String { name ?? id }
     var inMainOrganoid: Bool? = nil
     var automaticMainOrganoid: Bool? = nil
     var mainOrganoidFraction: Double? = nil
@@ -49,6 +51,7 @@ struct Dataset: Codable {
     let methods: [Method]
     let samples: [Sample]
     let cells, organoids: [Specimen]
+    var syntheticDemo: Bool? = nil
     func validate() throws {
         guard version == 1, !cells.isEmpty, !methods.isEmpty else { throw DataError.invalid("Unsupported or empty dataset") }
         let sampleIDs = Set(samples.map(\.id))
@@ -199,6 +202,7 @@ struct VolumeData {
 }
 
 @MainActor final class ExplorerStore: ObservableObject {
+    let missingMethods = MissingMethodsStore()
     @Published var dataset: Dataset?
     @Published var folder: URL?
     @Published var error: String?
@@ -212,6 +216,7 @@ struct VolumeData {
     @Published var plotColorSettings: [String: PlotColorSettings] = [:]
     @Published var unifiedPlotColorLevels: Set<String> = []
     @Published var unifiedPlotColorSettings: [String: PlotColorSettings] = [:]
+    private var demoColorBackup: (individual: [String: PlotColorSettings], levels: Set<String>, unified: [String: PlotColorSettings])?
     @Published var selectedID: String?
     @Published var method = "simclr3d_raw_isolated"
     @Published var search = ""
@@ -343,6 +348,17 @@ struct VolumeData {
                 UserDefaults.standard.set(url.path, forKey: "datasetPath")
                 search = ""; sampleFilter = "All stacks"; selection = []; markedOnly = false
                 clusterFilter = -1; splitFilter = "All splits"
+                if data.syntheticDemo == true {
+                    if demoColorBackup == nil {
+                        demoColorBackup = (plotColorSettings, unifiedPlotColorLevels, unifiedPlotColorSettings)
+                    }
+                    level = "Cells"; method = "spatial_robust"; referenceMethod = "traditional"
+                    unifiedPlotColorLevels.insert("Cells")
+                    unifiedPlotColorSettings["Cells"] = PlotColorSettings(feature: "demo_shape_class", palette: .atlas)
+                } else if let backup = demoColorBackup {
+                    plotColorSettings = backup.individual; unifiedPlotColorLevels = backup.levels
+                    unifiedPlotColorSettings = backup.unified; demoColorBackup = nil
+                }
                 if !data.methods.contains(where: { $0.id == method }) { method = data.methods.last!.id }
                 select(filtered.first?.id ?? "")
             } catch { self.error = error.localizedDescription; loading = false }
@@ -378,6 +394,10 @@ struct VolumeData {
     /// Refit every descriptive analysis after a membership change, then publish atomically.
     func updateMembership(cellID: String? = nil, included: Bool? = nil) {
         guard !membershipBusy, let folder else { return }
+        guard !missingMethods.busy else {
+            error = "Finish or stop the method calculation before changing organoid membership."
+            return
+        }
         membershipBusy = true
         let root = URL(fileURLWithPath: Bundle.main.object(forInfoDictionaryKey: "ExplorerProjectPath") as? String ?? FileManager.default.currentDirectoryPath)
         let request = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".json")

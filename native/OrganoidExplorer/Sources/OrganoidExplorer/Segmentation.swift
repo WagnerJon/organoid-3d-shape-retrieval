@@ -31,11 +31,13 @@ struct SegResult: Codable, Identifiable {
     let purpose: String?
     let prediction: SegPrediction?
     let cellposeModel: String?
+    let cellposeMode: String?
     let comparisonSide: String?
     let refinement: RefinementInfo?
     var analysisCells: [SegCell] { cells.filter(\.includedInAnalysis) }
     // Backend settings are heterogeneous; retain exact JSON separately when comparing.
-    var title: String { "\(method == "refined" ? ((refinement?.algorithmVersion ?? 1) >= 2 ? "Shape-preserving · " : "Legacy refinement · ") : method == "cellpose" ? (cellposeModel ?? "cpsam_v2") + " · " : "")\(created) · \(analysisCells.count) main-organoid cells" }
+    var cellposeModeName: String { cellposeMode == "cellpose3d" ? "Native 3D" : "u-Segment3D" }
+    var title: String { "\(method == "refined" ? ((refinement?.algorithmVersion ?? 1) >= 2 ? "Shape-preserving · " : "Legacy refinement · ") : method == "cellpose" ? (cellposeModel ?? "cpsam_v2") + " · " + cellposeModeName + " · " : "")\(created) · \(analysisCells.count) main-organoid cells" }
 }
 struct SegPair: Codable { let a, b: Int; let iou: Double }
 struct SegAgreement: Codable {
@@ -113,8 +115,8 @@ struct SegAgreement: Codable {
     var focusReady: Bool { focusInstalled && focusCheckpointAvailable }
     var comparisonReady: Bool { comparisonMethod != "refined" && (comparisonMethod == "cellpose" || (comparisonMethod == "focus3d" ? focusReady : pansegInstalled)) }
     var comparisonName: String { comparisonMethod == "refined" ? "Membrane-refined" : comparisonMethod == "cellpose" ? "Cellpose B" : comparisonMethod == "focus3d" ? "FOCUS-3D" : "PanSeg" }
-    var leftName: String { comparisonMethod == "refined" ? "Original · \(resultA.map { methodName($0.method) } ?? "segmentation")" : "Cellpose A · \(resultA.map { $0.cellposeModel ?? "cpsam_v2" } ?? cellposeA.model)" }
-    var rightName: String { comparisonMethod == "cellpose" ? "Cellpose B · \(resultB.map { $0.cellposeModel ?? "cpsam_v2" } ?? cellposeB.model)" : comparisonName }
+    var leftName: String { comparisonMethod == "refined" ? "Original · \(resultA.map { methodName($0.method) } ?? "segmentation")" : "Cellpose A · \(resultA.map { $0.cellposeModel ?? "cpsam_v2" } ?? cellposeA.model) · \(resultA?.cellposeModeName ?? cellposeA.modeName)" }
+    var rightName: String { comparisonMethod == "cellpose" ? "Cellpose B · \(resultB.map { $0.cellposeModel ?? "cpsam_v2" } ?? cellposeB.model) · \(resultB?.cellposeModeName ?? cellposeB.modeName)" : comparisonName }
     func methodName(_ method:String) -> String { method == "imported" ? "Imported labels" : method == "refined" ? "Membrane-guided refinement" : method == "cellpose" ? "Cellpose + u-Segment3D" : method == "focus3d" ? "FOCUS-3D" : "PanSeg" }
     func openFocusFile(config: Bool = false) {
         let panel = NSOpenPanel(); panel.message = config ? "Choose a FOCUS-3D YAML configuration" : "Choose a downloaded FOCUS-3D checkpoint (.pth)"
@@ -139,7 +141,7 @@ struct SegAgreement: Codable {
         guard let source else { return }
         let key = comparisonMethod == "cellpose" ? "cellposeComparisonB" : "\(comparisonMethod)Comparison"
         let saved = UserDefaults.standard.string(forKey:"\(key).\(source.fingerprint)")
-        let fallback = results.first(where:{$0.method == comparisonMethod && $0.purpose != "trial" && (comparisonMethod != "cellpose" || ($0.id != resultA?.id && $0.cellposeModel != resultA?.cellposeModel))})
+        let fallback = results.first(where:{$0.method == comparisonMethod && $0.purpose != "trial" && (comparisonMethod != "cellpose" || ($0.id != resultA?.id && ($0.cellposeModel != resultA?.cellposeModel || $0.cellposeModeName != resultA?.cellposeModeName)))})
         if let result = results.first(where:{$0.id == saved && $0.method == comparisonMethod}) ?? fallback {
             if result.method == "refined" { showRefinement(result) }
             else { choose(result,side:2) }
@@ -578,7 +580,7 @@ struct SegmentationView: View {
                 Picker("Compare Cellpose with",selection:Binding(get:{store.comparisonMethod},set:{store.setComparisonMethod($0)})) {
                     Text("FOCUS-3D").tag("focus3d")
                     Text("PanSeg").tag("panseg")
-                    Text("Cellpose model").tag("cellpose")
+                    Text("Cellpose model / 3D mode").tag("cellpose")
                 }.pickerStyle(.segmented).frame(maxWidth:420).disabled(store.busy)
                 configuration
                 Button("Open Post Processing…") { atlas.activeTab = "postprocessing" }

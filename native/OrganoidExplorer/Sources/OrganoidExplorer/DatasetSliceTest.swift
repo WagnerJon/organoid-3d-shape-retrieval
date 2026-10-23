@@ -114,6 +114,7 @@ struct DatasetSliceTestView: View {
                     }
                     Text("Uses the settings above. This is a 2D Cellpose test with slice-local preprocessing; full-volume preprocessing and u-Segment3D linking can produce different results. The test does not create or change a dataset.")
                         .font(.caption).foregroundStyle(.secondary)
+                    if preparation.settings.native3D { Text("Native 3D settings apply when preparing the complete stack. This single-slice test remains 2D and cannot preview 3D mask formation.").font(.caption).foregroundStyle(.orange) }
                 }
             }.padding(6)
         }

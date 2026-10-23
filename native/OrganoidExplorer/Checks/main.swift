@@ -220,6 +220,9 @@ if FileManager.default.fileExists(atPath: segmentationSourceURL.path) {
         cpManifest["id"] = "cellpose-"+side; cpManifest["method"] = "cellpose"
         cpManifest["cellposeModel"] = model; cpManifest["comparisonSide"] = side; cpManifest["folder"] = cpFolder.path
         var controls = CellposeSettings(); controls.model = model; controls.scale = side == "A" ? 0.1 : 0.2
+        controls.segmentationMode = side == "A" ? "usegment3d" : "cellpose3d"
+        controls.flow3DSmooth = side == "A" ? 0 : 1.5
+        cpManifest["cellposeMode"] = controls.segmentationMode
         cpManifest["settings"] = try controls.json()
         let data = try JSONSerialization.data(withJSONObject:cpManifest)
         try data.write(to:cpFolder.appendingPathComponent("result.json")); try labelData.write(to:cpFolder.appendingPathComponent("labels.u32"))
@@ -230,11 +233,15 @@ if FileManager.default.fileExists(atPath: segmentationSourceURL.path) {
     let separateCP = tuning.resultA?.id == cpResults[0].id && tuning.resultB?.id == cpResults[1].id
     let separateSettings = tuning.cellposeA.model == "cpsam_v2" && tuning.cellposeB.model == "cpdino-vitb" && tuning.cellposeA.scale == 0.1 && tuning.cellposeB.scale == 0.2
     require(separateCP && separateSettings,"Cellpose A/B runs and controls remain independent")
+    require(!tuning.cellposeA.native3D && tuning.cellposeB.native3D && tuning.cellposeB.flow3DSmooth == 1.5, "Native 3D and u-Segment3D controls remain independent across sides")
+    require(tuning.leftName.contains("u-Segment3D") && tuning.rightName.contains("Native 3D"), "Comparison headings identify each mask formation method")
     tuning.setComparisonMethod("focus3d"); tuning.setComparisonMethod("cellpose")
     let restoredCP = tuning.resultA?.id == cpResults[0].id && tuning.resultB?.id == cpResults[1].id
     require(restoredCP,"Switching methods restores Cellpose B without replacing A")
     let originalCP = try CellposeSettings.fromJSON(["model":"cpdino","background_correction":false])
     require(originalCP.model == "cpdino" && !originalCP.background,"Imported reconstruction settings retain model/background")
+    let nativeImport = try CellposeSettings.fromJSON(["model":"cpsam_v2","diameterProcessedPx":20,"backgroundCorrection":false,"segmentationMode":"cellpose3d","flow3DSmooth":1.5])
+    require(nativeImport.native3D && nativeImport.diameter == 20 && !nativeImport.background && nativeImport.flow3DSmooth == 1.5, "Imported standalone native 3D runs retain mode and controls")
     require(cpResults[1].title.contains("cpdino-vitb"),"Run history names the actual model")
     UserDefaults.standard.removeObject(forKey:"cellposeComparisonA.\(fixtureID)")
     UserDefaults.standard.removeObject(forKey:"cellposeComparisonB.\(fixtureID)")

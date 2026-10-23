@@ -115,10 +115,10 @@ def export(run, output, sample_id='GFP24h_MV5'):
         samples=[dict(id=sample_id, shape=target.tolist(),
                       spacing=(spacing * (shape - 1) / np.maximum(target - 1, 1)).tolist(),
                       extent=(spacing * (shape - 1)).tolist(), rawAvailable=True,
-                      labelGrid=dict(shape=shape.tolist(), spacingZYXum=spacing.tolist(), rawGridOffsetZYXum=raw_offset.tolist(), coordinates='Grid-local voxel centers in micrometers', linkingMode=info.get('linkingMode','standard')),
+                      labelGrid=dict(shape=shape.tolist(), spacingZYXum=spacing.tolist(), rawGridOffsetZYXum=raw_offset.tolist(), coordinates='Grid-local voxel centers in micrometers', linkingMode=info.get('linkingMode','standard'), segmentationMode=info.get('segmentationMode','usegment3d')),
                       sourceImage=info['source'], sourceLabels=str(run / 'labels_native.ome.tif'), meshCount=len(cells))],
         traditionalFeatures=features, normalization=dict(mean=mean.tolist(), std=std.tolist()),
-        provenance=f"Cellpose {info['model']} + u-Segment3D, processing scale {info['scale']}. "
+        provenance=f"Cellpose {info['model']} ({'native 3D dynamics' if info.get('segmentationMode')=='cellpose3d' else 'u-Segment3D linking'}), processing scale {info['scale']}. "
         f"Original surfaces in calibrated micrometers; spacing Z/Y/X {info['spacingZYXum']}. No mesh smoothing. "
         f"All {len(cells)} candidate objects retained; {int((~qc).sum())} flagged for review. "
         'Membership inclusion is provisional until dataset preparation classifies detached cells. '

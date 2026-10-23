@@ -47,8 +47,13 @@ def setup(args):
     from importlib.metadata import version,PackageNotFoundError
     folder=args.output.resolve();source=args.input.resolve();meta=calibration(source, getattr(args, "spacing", None))
     core=dict(source=str(source),sourceStat=source_stat(source),scale=args.scale,diameterProcessedPx=args.diameter,model=getattr(args,'model','cpsam_v2'),gpu=not getattr(args,'cpu',False),backgroundCorrection=not getattr(args,'no_background',False),binaryFillHoles=False,gradientDecay=.05,**meta)
+    from atlas_cellpose_3d import settings as native_settings
+    native = native_settings(dict(segmentationMode=getattr(args,'segmentation_mode','usegment3d'), flow3DSmooth=getattr(args,'flow_3d_smooth',0.), cellprobThreshold=getattr(args,'cellprob_threshold',0.), minSize3D=getattr(args,'min_size_3d',15)))
+    if native['segmentationMode']=='cellpose3d':core.update(native)
     from atlas_streamed_linking import validate_mode,check_space
     mode=validate_mode(getattr(args,'linking_mode','standard'))
+    if native['segmentationMode']=='cellpose3d' and mode!='standard':
+        raise ValueError('Native Cellpose 3D requires whole-volume mode, not streamed u-Segment3D linking.')
     if mode=='streamed':core['linkingMode']=mode
     if not (folder/'aggregate.completed.json').exists():
         from atlas_preprocessing import check_memory
@@ -61,6 +66,7 @@ def setup(args):
     if p.exists():
         current=json.loads(p.read_text());assert all(current.get(k)==v for k,v in core.items()),'Output folder belongs to different settings or source'
         assert current.get('linkingMode','standard')==mode,'Output folder belongs to a different linking mode'
+        assert current.get('segmentationMode','usegment3d')==native['segmentationMode'],'Output folder belongs to a different segmentation mode'
         return current
     if list(folder.iterdir()):raise ValueError('Refusing to reuse a nonempty, unrecognized output folder')
     runtime={}
@@ -68,16 +74,17 @@ def setup(args):
         try:runtime[name]=version(name)
         except PackageNotFoundError:pass
     config=dict(**core,sourceSHA256=digest(source),checkpointSHA256=digest(ROOT/'.cache/cellpose'/core['model']) if (ROOT/'.cache/cellpose'/core['model']).is_file() else 'Downloaded by Cellpose on first inference',runtime=runtime,
-                scriptSHA256=digest(__file__),created=time.strftime('%Y-%m-%dT%H:%M:%S%z'),execution='Separate processes; sequential views; '+('disk-backed fine-grid linking' if mode=='streamed' else 'whole-volume aggregation'))
+                scriptSHA256=digest(__file__),created=time.strftime('%Y-%m-%dT%H:%M:%S%z'),execution='Native Cellpose 3D; whole-volume masks' if native['segmentationMode']=='cellpose3d' else 'Separate processes; sequential views; '+('disk-backed fine-grid linking' if mode=='streamed' else 'whole-volume aggregation'))
     save(p,config);(folder/'logs').mkdir();(folder/'predictions').mkdir();(folder/'script_snapshot.py').write_bytes(Path(__file__).read_bytes())
-    (folder/'README.md').write_text(f'''# Standalone Cellpose + u-Segment3D analysis
+    segmentation_note='Native Cellpose do_3D=True on the isotropic processing grid; no u-Segment3D linking. MPS prediction uses CPU 3D mask formation.' if native['segmentationMode']=='cellpose3d' else 'XY, XZ and YZ predictions are merged by u-Segment3D (200 gradient-descent iterations, decay 0.05). Optional whole-volume binary hole filling is disabled.'
+    (folder/'README.md').write_text(f'''# Standalone Cellpose 3D analysis
 
 Input: `{source.name}`. The raw file is unchanged.
 
 - Native ZYX: {meta['nativeShape']}; TIFF spacing ZYX: {meta['spacingZYXum']} µm.
 - Cellpose {core['model']}, processing scale {args.scale}, diameter {args.diameter} processed pixels.
 - Original full field of view; no crop. Background correction enabled.
-- XY, XZ and YZ predictions are merged by u-Segment3D (200 gradient-descent iterations, decay 0.05). Optional whole-volume binary hole filling is disabled to avoid forcing a possible central lumen into foreground.
+- {segmentation_note}
 - Each stage has a separate process and checkpoint; logs and memory samples are retained.
 
 Outputs after completion: calibrated `labels_processed.ome.tif`, streamed original-grid `labels_native.ome.tif`, `meshes/`, `cell_measurements.csv`, `preview.png`, `summary.json` and `complete.json`.
@@ -148,6 +155,17 @@ def worker(folder,stage):
             save_array(folder/'predictions'/f'{stage}_prob.npy',prob.astype(np.float32,copy=False));save_array(folder/'predictions'/f'{stage}_flow.npy',flow.astype(np.float32,copy=False))
             details=dict(view=stage,shape=list(prob.shape),parameters=cp,device='GPU' if use_gpu else 'CPU')
     elif stage=='aggregate':
+        if cfg.get('segmentationMode')=='cellpose3d':
+            from atlas_cellpose_3d import predict
+            from atlas_streamed_linking import progress_event
+            processed=np.load(folder/'processed.npy',mmap_mode='r')
+            labels, details=predict(processed,dict(cfg,diameter=cfg['diameterProcessedPx']),lambda label,fraction:progress_event('aggregate',label,fraction))
+            save_array(folder/'labels_processed.npy',labels)
+            save(folder/'aggregation.json',details)
+            details.update(stage=stage,seconds=time.time()-start,peakProcessRSSGiB=resource.getrusage(resource.RUSAGE_SELF).ru_maxrss/2**30,scriptSHA256=digest(__file__))
+            save(folder/f'{stage}.completed.json',details)
+            print('STAGE COMPLETE',stage,json.dumps(details),flush=True)
+            return
         from segment3D import parameters
         agg=parameters.get_2D_to_3D_aggregation_params();agg['gradient_descent']['gradient_decay']=cfg['gradientDecay'];agg['gradient_descent']['do_mp']=False
         agg['postprocess_binary']['binary_fill_holes']=cfg['binaryFillHoles']
@@ -214,7 +232,8 @@ def export(folder,cfg):
         lo,hi=np.percentile(im,[1,99.8]);norm=np.clip((im.astype(np.float32)-lo)/max(float(hi-lo),1),0,1)
         axs[0,axis].imshow(norm,cmap='gray');axs[1,axis].imshow(label2rgb(lab,image=norm,colors=colors,alpha=.45,bg_label=0));axs[0,axis].set_title(f'{name} raw · middle slice');axs[1,axis].set_title(f'{name} prediction overlay')
         for row in [0,1]:axs[row,axis].axis('off')
-    fig.suptitle(f'Cellpose-SAM + u-Segment3D · {len(rows)} predicted objects · scale {cfg["scale"]}\nTIFF calibration; review predictions before quantitative use',fontsize=13);fig.tight_layout();fig.savefig(folder/'preview.png',dpi=150);plt.close(fig)
+    method='Native Cellpose 3D' if cfg.get('segmentationMode')=='cellpose3d' else 'Cellpose + u-Segment3D'
+    fig.suptitle(f'{method} · {len(rows)} predicted objects · scale {cfg["scale"]}\nTIFF calibration; review predictions before quantitative use',fontsize=13);fig.tight_layout();fig.savefig(folder/'preview.png',dpi=150);plt.close(fig)
     for name,expected in [('labels_native.ome.tif',tuple(native)),('labels_processed.ome.tif',labels.shape)]:
         with tifffile.TiffFile(folder/name) as t:assert t.series[0].shape==expected and t.series[0].dtype==np.uint32 and t.is_ome
     summary=dict(predictedObjects=len(rows),borderTouchingObjects=sum(r['touches_border'] for r in rows),nonWatertightMeshes=sum(not r['mesh_watertight'] for r in rows),effectiveSpacingZYXum=spacing.tolist(),processedShape=list(labels.shape),nativeShape=native,validation='No manual/reference labels supplied; overlays and morphology are descriptive model outputs')
@@ -223,7 +242,9 @@ def export(folder,cfg):
 def run(args):
     import psutil
     cfg=setup(args);folder=args.output.resolve();print('Output folder:',folder,flush=True)
-    stages=STAGES[:STAGES.index(args.through_stage)+1] if getattr(args,'through_stage',None) else STAGES
+    from atlas_cellpose_3d import stage_sequence
+    all_stages=stage_sequence(cfg)
+    stages=all_stages[:all_stages.index(args.through_stage)+1] if getattr(args,'through_stage',None) else all_stages
     for stage in stages:
         checkpoint=folder/f'{stage}.completed.json'
         if checkpoint.exists():print('Using completed stage:',stage,flush=True);continue
@@ -251,7 +272,7 @@ def run(args):
                     low_count=low_count+1 if available<.5 or rss>11.5 else 0
                     if low_count>=3:
                         process.terminate();process.wait();save(folder/'status.json',dict(status='memory_guard_stopped',stage=stage,peakRSSGiB=peak,minAvailableGiB=minimum_available));raise RuntimeError(f'Memory safeguard stopped {stage}: peak sampled process memory {peak:.1f} GiB, lowest available memory {minimum_available:.1f} GiB. Close other memory-heavy apps, or lower processing scale and choose a new results folder. Completed stages remain cached.')
-                    save(folder/'status.json',dict(status='running',stage=inner_label,phase=stage,taskFraction=(STAGES.index(stage)+inner_fraction)/len(STAGES),elapsedSeconds=time.time()-started,rssGiB=rss,peakRSSGiB=peak,availableGiB=available))
+                    save(folder/'status.json',dict(status='running',stage=inner_label,phase=stage,taskFraction=(all_stages.index(stage)+inner_fraction)/len(all_stages),elapsedSeconds=time.time()-started,rssGiB=rss,peakRSSGiB=peak,availableGiB=available))
                     time.sleep(2)
             relay()
             if process.returncode!=0:
@@ -259,10 +280,11 @@ def run(args):
         assert checkpoint.exists();print('Finished',stage,'peak sampled RSS',round(peak,2),'GiB',flush=True)
     if getattr(args,'through_stage',None):return
     assert source_stat(cfg['source'])==cfg['sourceStat'] and digest(cfg['source'])==cfg['sourceSHA256']
-    summary=json.loads((folder/'summary.json').read_text());save(folder/'complete.json',dict(status='complete',sourceUnchanged=True,summary=summary,stages=[json.loads((folder/f'{s}.completed.json').read_text()) for s in STAGES]));save(folder/'status.json',dict(status='complete',**summary));print('COMPLETE',json.dumps(summary),flush=True)
+    summary=json.loads((folder/'summary.json').read_text());save(folder/'complete.json',dict(status='complete',sourceUnchanged=True,summary=summary,stages=[json.loads((folder/f'{s}.completed.json').read_text()) for s in all_stages]));save(folder/'status.json',dict(status='complete',**summary));print('COMPLETE',json.dumps(summary),flush=True)
 
 def main():
     p=argparse.ArgumentParser(description=__doc__);p.add_argument('--input',type=Path);p.add_argument('--output',type=Path,required=True);p.add_argument('--scale',type=float,default=.35);p.add_argument('--diameter',type=float,default=30);p.add_argument('--stage',choices=STAGES);p.add_argument('--through-stage',choices=STAGES);p.add_argument('--spacing',type=float,nargs=3);p.add_argument('--model',choices=['cpsam_v2','cpdino','cpdino-vitb'],default='cpsam_v2');p.add_argument('--cpu',action='store_true');p.add_argument('--no-background',action='store_true');p.add_argument('--linking-mode',choices=['standard','streamed'],default='standard')
+    p.add_argument('--segmentation-mode',choices=['usegment3d','cellpose3d'],default='usegment3d');p.add_argument('--flow-3d-smooth',type=float,default=0.);p.add_argument('--cellprob-threshold',type=float,default=0.);p.add_argument('--min-size-3d',type=int,default=15)
     args=p.parse_args()
     if args.stage:worker(args.output,args.stage)
     else:

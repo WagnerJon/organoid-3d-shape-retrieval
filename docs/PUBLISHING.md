@@ -4,6 +4,8 @@ The project is published at [WagnerJon/organoid-atlas](https://github.com/Wagner
 
 The former `WagnerJon/organoid-3d-shape-retrieval` repository URL redirects to this repository. Do not reuse that repository name under the same account, as doing so would remove the redirect. GitHub Pages uses https://wagnerjon.github.io/organoid-atlas/; the former Pages URL is not redirected. The existing Zenodo DOI remains unchanged.
 
+The included synthetic demo is an exception to the research-output exclusions: `native/OrganoidExplorer/Resources/DemoShapes.atlasdemo` contains generated shapes, synthetic images and precomputed demonstration results. It contains no experimental microscopy or model weights. `.zenodo.json` supplies release metadata, including demo availability, to the GitHub–Zenodo integration. Publish a GitHub release to archive a new version under the existing Zenodo concept DOI.
+
 For later changes, run from the repository root:
 
 ```bash

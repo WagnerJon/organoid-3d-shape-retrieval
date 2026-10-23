@@ -38,11 +38,12 @@ def open_array(path):
 
 
 def inspect(path):
+    from atlas_calibration import assumed_cubic_spacing, ESTIMATED_SOURCE
     path = Path(path).resolve()
     array = open_array(path)
     try:
         return dict(path=str(path), name=path.name, shape=list(array.shape), axes='ZYX', dtype=str(array.dtype),
-                    spacing=[1.,1.,1.], calibrationSource='NumPy axes assumed Z/Y/X; no calibration metadata, default 1 × 1 × 1 µm (editable)',
+                    spacing=assumed_cubic_spacing(array.shape), calibrationSource='NumPy axes assumed Z/Y/X; '+ESTIMATED_SOURCE,
                     sourceStat=stat(path))
     finally:
         array._mmap.close()

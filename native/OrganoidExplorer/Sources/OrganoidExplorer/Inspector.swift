@@ -42,7 +42,7 @@ private struct InspectorContent: View {
                         .font(.caption2).foregroundStyle(.secondary)
                 }
                 Divider()
-                HStack { Text("Raw microscopy + labels").font(.headline); Spacer(); Toggle("Overlay", isOn: $store.overlay).toggleStyle(.checkbox).font(.caption) }
+                HStack { Text(store.dataset?.syntheticDemo == true ? "Synthetic image + labels" : "Raw microscopy + labels").font(.headline); Spacer(); Toggle("Overlay", isOn: $store.overlay).toggleStyle(.checkbox).font(.caption) }
                 if let volume = store.volume {
                     RawSliceView(volume: volume, navigation: navigation)
                     HStack {
@@ -99,7 +99,7 @@ private struct InspectorContent: View {
                             Text(sample.sourceLabels).font(.caption2).textSelection(.enabled)
                         }.padding(20).frame(width: 420)
                     }
-                Text("Original surfaces · inferred µm calibration\n3D slicing clips surfaces; cut faces are not capped.").font(.caption2).foregroundStyle(.secondary)
+                Text(store.dataset?.syntheticDemo == true ? "Generated shapes · nominal µm units\n3D slicing clips surfaces; cut faces are not capped." : "Original surfaces · inferred µm calibration\n3D slicing clips surfaces; cut faces are not capped.").font(.caption2).foregroundStyle(.secondary)
             } else { ContentUnavailableView("Select an object", systemImage: "cursorarrow.click", description: Text("Choose a row or plot point to open its parent reconstruction.")) }
         }
     }

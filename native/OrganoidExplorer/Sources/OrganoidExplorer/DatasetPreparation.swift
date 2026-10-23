@@ -4,6 +4,14 @@ import UniformTypeIdentifiers
 
 private let atlasStackTypes: [UTType] = [.tiff, UTType(filenameExtension: "npy") ?? UTType(importedAs: "org.numpy.npy", conformingTo: .data)]
 
+enum PreparationCalibration {
+    static let estimatedSource = "Missing calibration; assume cubic stack (estimated): X = Y = 1 nominal µm, Z = longest XY dimension / slice count. Absolute physical scale is unknown (editable)."
+    static func assumedCubicSpacing(_ shape: [Int]) -> [Double] {
+        guard shape.count == 3, shape.allSatisfy({ $0 > 0 }) else { return [1,1,1] }
+        return [Double(max(shape[1],shape[2])) / Double(shape[0]), 1, 1]
+    }
+}
+
 struct PreparationInput: Codable, Identifiable {
     var path: String
     var name: String
@@ -28,7 +36,8 @@ private struct InspectedInput: Decodable {
     let spacing: [Double]?
     let sourceStat: [Int64]
     var input: PreparationInput { PreparationInput(path: path, name: name, shape: shape, axes: axes, dtype: dtype,
-        spacing: spacing ?? [1,1,1], calibrationSource: calibrationSource, sourceStat: sourceStat) }
+        spacing: spacing ?? PreparationCalibration.assumedCubicSpacing(shape),
+        calibrationSource: spacing == nil ? PreparationCalibration.estimatedSource : calibrationSource, sourceStat: sourceStat) }
 }
 private struct InspectionResult: Decodable { let inputs: [InspectedInput] }
 struct PreparationRequest: Codable {
@@ -148,7 +157,7 @@ struct PreparationMemoryPlan {
     var valid: Bool {
         !busy && !memoryBlocked && result == nil && confirmed && !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !inputs.isEmpty && output != nil &&
         inputs.allSatisfy { $0.spacing.count == 3 && $0.spacing.allSatisfy { $0.isFinite && $0 > 0 } } &&
-        settings.scale.isFinite && (0.05...1).contains(settings.scale) && settings.diameter.isFinite && (2...500).contains(settings.diameter)
+        settings.scale.isFinite && (0.05...1).contains(settings.scale) && settings.diameter.isFinite && (2...500).contains(settings.diameter) && settings.valid3DSettings
     }
     func reset() {
         guard !busy else { return }
@@ -207,8 +216,8 @@ struct PreparationMemoryPlan {
             let selection = OMEZarrSelection(time: time, channel: channel, level: level, label: label, fingerprint: image.fingerprint,
                                             origin: grid.origin, timestamp: image.timestamps.indices.contains(time) ? image.timestamps[time] : nil)
             let input = PreparationInput(path:image.path, name:"\(image.name) · T\(time) · \(image.channels[channel]) · level \(level)",
-                shape:grid.shapeZYX, axes:"ZYX", dtype:grid.dtype, spacing:grid.spacing ?? [1,1,1],
-                calibrationSource:grid.spacing == nil ? "No calibration metadata · default 1 × 1 × 1 µm (editable)" : "OME-NGFF level-specific spatial transforms (µm)", sourceStat:image.sourceStat, omeZarr:selection)
+                shape:grid.shapeZYX, axes:"ZYX", dtype:grid.dtype, spacing:grid.spacing ?? PreparationCalibration.assumedCubicSpacing(grid.shapeZYX),
+                calibrationSource:grid.spacing == nil ? PreparationCalibration.estimatedSource : "OME-NGFF level-specific spatial transforms (µm)", sourceStat:image.sourceStat, omeZarr:selection)
             if !inputs.contains(where: { $0.id == input.id }) { inputs.append(input) }
         }
         zarrCatalog = nil; confirmed = false
@@ -264,6 +273,7 @@ struct PreparationMemoryPlan {
         } catch { self.error = "This is not an Atlas preparation folder.\n\(error.localizedDescription)" }
     }
     func start() {
+        if settings.native3D { workers.splitStacks = false; linkingMode = "standard" }
         guard workers.useLocal || !workers.enabled.isEmpty else { error = "Select this Mac or a paired worker in Nearby Macs."; return }
         guard valid, let output else { return }
         do {
@@ -398,7 +408,7 @@ struct DatasetPreparationView: View {
                                     Divider()
                                 }
                             }
-                            Text("NumPy arrays use Z/Y/X order. Missing calibration defaults to 1 × 1 × 1 µm; edit these values if known. Spacing is the distance between voxel centers in micrometers; Z is the slice step. Each stack becomes one organoid entry.")
+                            Text("NumPy arrays use Z/Y/X order. Missing calibration assumes a cubic stack: X = Y = 1 and Z = longest XY dimension ÷ slice count. Only Z is estimated; rectangular images keep their XY aspect ratio. These are nominal µm, not measured physical sizes; edit the values if known. Known microscopy calibration is preserved. Each stack becomes one organoid entry.")
                                 .font(.caption).foregroundStyle(.secondary)
                         }.padding(6)
                     }
@@ -414,12 +424,13 @@ struct DatasetPreparationView: View {
                                 TextField("Diameter", value: $preparation.settings.diameter, format: .number).frame(width: 65)
                                 Text("processed px").font(.caption).foregroundStyle(.secondary)
                             }
-                            Text("Scale 0.05–1. Smaller values reduce memory use and detail. Cellpose runs on XY, XZ and YZ views, followed by u-Segment3D linking. First use may download model weights.")
+                            Text("Scale 0.05–1. Smaller values reduce memory use and detail. Choose u-Segment3D linking or Cellpose's native 3D mask formation. First use may download model weights.")
                                 .font(.caption).foregroundStyle(.secondary)
+                            CellposeModeControls(settings: $preparation.settings)
                             Picker("3D linking", selection: $preparation.linkingMode) {
                                 Text("Standard").tag("standard")
                                 Text("Memory-saving fine grid").tag("streamed")
-                            }.frame(maxWidth: 480)
+                            }.frame(maxWidth: 480).disabled(preparation.settings.native3D)
                             if preparation.linkingMode == "streamed" {
                                 Text("Keeps the selected resolution. Saves Cellpose predictions and links cells using temporary disk files. Progress is saved every 8 image planes and flow chunks; resume with the same settings. Temporary linking arrays are removed when labels are verified.")
                                     .font(.caption).foregroundStyle(.secondary)
@@ -449,7 +460,7 @@ struct DatasetPreparationView: View {
                                 .font(.caption).foregroundStyle(.secondary)
                         }.padding(6)
                     }
-                    AtlasWorkerSelection(workers: preparation.workers, showWorkers: $showWorkers)
+                    AtlasWorkerSelection(workers: preparation.workers, showWorkers: $showWorkers, allowPlaneBatches: !preparation.settings.native3D)
                     GroupBox("3 · Save and prepare") {
                         VStack(alignment: .leading, spacing: 10) {
                             TextField("Dataset name", text: $preparation.title).textFieldStyle(.roundedBorder)
@@ -502,5 +513,8 @@ struct DatasetPreparationView: View {
                 }, close: { preparation.zarrCatalog = nil })
             }
             .sheet(isPresented: $showWorkers) { AtlasWorkersView(workers: preparation.workers, close: { showWorkers = false }) }
+            .onChange(of: preparation.settings.segmentationMode) { _ in
+                if preparation.settings.native3D { preparation.workers.splitStacks = false; preparation.linkingMode = "standard" }
+            }
     }
 }

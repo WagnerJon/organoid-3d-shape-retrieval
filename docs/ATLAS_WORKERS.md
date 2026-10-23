@@ -1,5 +1,11 @@
 # Nearby Mac workers
 
+Native Cellpose 3D is available for whole-stack jobs on a selected Mac. It uses
+Cellpose's `do_3D=True` mask dynamics rather than u-Segment3D linking. Plane
+batches and disk-backed u-Segment3D linking apply only to the u-Segment3D mode;
+Atlas disables those options for native Cellpose 3D. Update the worker package
+with the main app so both use the same processing code.
+
 Atlas can prepare a multi-stack dataset using paired Apple Silicon Macs. Dask
 coordinates whole-stack or plane-batch tasks inside the preparation process; workers receive
 fixed processing requests over pinned HTTPS. No Dask port or arbitrary Python
@@ -73,7 +79,7 @@ assembly. Batch results, logs, hashes and checkpoints remain under
 Imported label stacks bypass inference as before.
 
 NumPy image and label arrays are first streamed into calibrated TIFF caches on
-the coordinating Mac. Missing calibration starts at 1 × 1 × 1 µm and remains
+the coordinating Mac. Missing calibration assumes cubic-stack depth (X = Y = 1; Z = longest XY dimension / slice count, in nominal µm) and remains
 editable. Original NumPy paths and checksums are retained in dataset provenance.
 
 Raw/label TIFFs are streamed to a worker cache and SHA-256 verified. Identical

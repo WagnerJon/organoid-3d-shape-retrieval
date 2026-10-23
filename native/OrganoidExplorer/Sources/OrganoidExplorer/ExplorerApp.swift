@@ -16,9 +16,12 @@ import AppKit
                     NSApp.activate(ignoringOtherApps: true)
                     guard store.dataset == nil, !store.loading else { return }
                     let argument = CommandLine.arguments.dropFirst().first
-                    let bundledPath = Bundle.main.object(forInfoDictionaryKey: "ExplorerDatasetPath") as? String
-                    let path = argument ?? UserDefaults.standard.string(forKey: "datasetPath") ?? bundledPath
-                    if let path { store.load(URL(fileURLWithPath: path)) }
+                    if argument == "--demo" { store.openDemo() }
+                    else if let argument { store.load(URL(fileURLWithPath: argument)) }
+                    else if let path = UserDefaults.standard.string(forKey: "datasetPath"),
+                            FileManager.default.fileExists(atPath: URL(fileURLWithPath: path).appendingPathComponent("dataset.json").path) {
+                        store.load(URL(fileURLWithPath: path))
+                    } else { store.openDemo() }
                 }
         }
         .defaultSize(width: 1380, height: 790)
@@ -26,6 +29,7 @@ import AppKit
             CommandGroup(replacing: .newItem) {
                 Button("New Dataset…") { store.showPreparation = true }.keyboardShortcut("n")
                 Button("Open Experiment…") { store.openPanel() }.keyboardShortcut("o")
+                Button("Open Demo Dataset") { store.openDemo() }.keyboardShortcut("d", modifiers: [.command, .shift])
                 Button("Export Visible / Marked Rows…") { store.exportSelection() }.keyboardShortcut("e", modifiers: [.command, .shift])
             }
         }
@@ -63,6 +67,7 @@ struct ContentView: View {
                 } actions: {
                     Button("New Dataset…") { store.showPreparation = true }.buttonStyle(.borderedProminent)
                     Button("Open Experiment…") { store.openPanel() }
+                    Button("Open Demo Dataset") { store.openDemo() }
                 }
             }
         }
@@ -71,6 +76,7 @@ struct ContentView: View {
             ToolbarItemGroup {
                 Button { store.showPreparation = true } label: { Label("New Dataset", systemImage: "plus.square") }
                 Button { store.openPanel() } label: { Label("Open", systemImage: "folder") }
+                Button { store.openDemo() } label: { Label("Open Demo Dataset", systemImage: "cube.fill") }.disabled(store.loading)
                 Button { store.exportSelection() } label: { Label("Export rows", systemImage: "square.and.arrow.up") }.disabled(store.dataset == nil)
             }
         }
@@ -103,6 +109,20 @@ struct ContentView: View {
                 .pickerStyle(.segmented).labelsHidden().onChange(of: store.level) { store.changeLevel() }
             }
             if let data = store.dataset {
+                if data.syntheticDemo == true {
+                    VStack(alignment: .leading, spacing: 5) {
+                        Label("DEMO · SYNTHETIC SHAPES", systemImage: "cube.fill").font(.caption.bold()).foregroundStyle(.teal)
+                        ForEach(Array(["Star", "Sphere", "Ellipsoid", "Cactus", "Sausage", "Donut"].enumerated()), id: \.offset) { index, name in
+                            HStack(spacing: 6) {
+                                Circle().fill(store.unifiedPlotColors && store.plotColors(store.referenceMethod).feature == "demo_shape_class"
+                                              ? Color(store.plotColors(store.referenceMethod).palette.groupColor(index)) : Color.secondary)
+                                    .frame(width: 7, height: 7)
+                                Text(name).font(.caption)
+                            }
+                        }
+                        Text("12 variations each · generated images\nFor exploration; not biological data.").font(.caption2).foregroundStyle(.secondary)
+                    }
+                }
                 VStack(alignment: .leading, spacing: 5) {
                     Text("\(data.cells.filter(\.includedInAnalysis).count.formatted()) included cells").font(.title3.bold())
                     Text("\(data.samples.count) reconstructed stacks").foregroundStyle(.secondary)
@@ -384,8 +404,8 @@ struct DataTable: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack { Text(store.level == "Cells" ? "Cell measurements" : "Stack measurements").font(.headline); Spacer(); Text("Click a row to inspect in 3D").font(.caption).foregroundStyle(.secondary) }
             Table(store.measurementItems.sorted(using: sortOrder), selection: Binding(get: { store.selectedTableRows }, set: { store.selectTableRows($0) }), sortOrder: $sortOrder) {
-                TableColumn("Object", value: \.id) { item in
-                    HStack(spacing: 4) { if store.selection.contains(item.id) { Circle().fill(.teal).frame(width: 5,height: 5) }; Text(item.id).monospaced() }
+                TableColumn("Object", value: \.displayName) { item in
+                    HStack(spacing: 4) { if store.selection.contains(item.id) { Circle().fill(.teal).frame(width: 5,height: 5) }; Text(item.displayName).monospaced().help(item.id) }
                 }.width(min: 85, ideal: 100)
                 TableColumn("Volume µm³", value: \.volume) { Text($0.volume, format: .number.precision(.fractionLength(0))).monospacedDigit() }.width(min: 90, ideal: 100)
                 TableColumn("Sphericity", value: \.sphericity) { Text($0.sphericity, format: .number.precision(.fractionLength(3))) }.width(min: 65, ideal: 80)
@@ -420,7 +440,7 @@ struct SimilarityPanel: View {
                 Button {
                     store.compared = neighbor.item; store.showCompare = true
                 } label: {
-                    HStack { Text("\(index+1)").foregroundStyle(.secondary); Text(neighbor.id).monospaced(); Spacer(); Text(String(format: "%.3g", neighbor.distance)).monospacedDigit(); Image(systemName: "square.split.2x1") }.font(.caption)
+                    HStack { Text("\(index+1)").foregroundStyle(.secondary); Text(neighbor.item.displayName).monospaced(); Spacer(); Text(String(format: "%.3g", neighbor.distance)).monospacedDigit(); Image(systemName: "square.split.2x1") }.font(.caption)
                 }.buttonStyle(.plain).padding(.vertical, 3)
             }
         }.frame(maxWidth: .infinity, alignment: .leading)

@@ -8,6 +8,7 @@ ORDERS = {'xy': (0, 1, 2), 'xz': (1, 0, 2), 'yz': (2, 0, 1)}
 
 
 def infer(source, settings, output):
+    if settings.get('segmentationMode')=='cellpose3d':raise ValueError('Native Cellpose 3D requires a complete stack, not plane batches.')
     import numpy as np
     import torch
     from cellpose import models
@@ -34,6 +35,7 @@ def infer(source, settings, output):
 
 
 def prepare(entry, settings, run):
+    if settings.get('segmentationMode')=='cellpose3d':raise ValueError('Native Cellpose 3D requires a complete stack, not plane batches.')
     from types import SimpleNamespace
     from atlas_worker import compute_slot
     args = SimpleNamespace(input=Path(entry['path']), output=Path(run), spacing=entry['spacing'], scale=settings['scale'], diameter=settings['diameter'], model=settings['model'], cpu=not settings['gpu'], no_background=not settings['background'], through_stage='preprocess',linking_mode=settings.get('linkingMode','standard'))

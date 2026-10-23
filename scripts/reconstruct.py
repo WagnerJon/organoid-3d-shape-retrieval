@@ -99,33 +99,43 @@ def predict(image, config, folder, progress=None):
     if raw.ndim != 3:
         raise ValueError("Expected a ZYX image volume")
     spacing = np.array(config["spacing_zyx_um"])
+    from atlas_cellpose_3d import settings as native_settings
+    native=native_settings(config)
+    if native['segmentationMode']=='cellpose3d':
+        from atlas_preprocessing import check_memory
+        check_memory(raw.shape,spacing,config['scale'])
     pre = parameters.get_preprocess_params()
     pre.update(factor=config["scale"], voxel_res=(spacing / spacing.min()).tolist(),
                do_bg_correction=config["background_correction"], bg_ds=8)
     report("Cellpose: preprocessing raw volume", .05)
     processed = np.squeeze(usegment3d.preprocess_imgs(raw, pre))
     processed = ndimage.median_filter(processed, size=3)
-    cp = parameters.get_Cellpose_autotune_params()
-    cp.update(cellpose_modelname=config["model"], gpu=config["gpu"],
-              best_diam=config["diameter"], debug_viz=False)
-    probs, flows = [], []
-    for view_index, view in enumerate(["xy", "xz", "yz"]):
-        report(f"Cellpose {model_name}: {view.upper()} inference", .1 + .2 * view_index, .2)
-        cache = folder / f"{view}.npz"
-        if cache.exists():
-            with np.load(cache) as saved:
-                prob, flow = saved["prob"], saved["flow"]
-        else:
-            print(f"{image.stem}: Cellpose {view}", flush=True)
-            _, prob, flow, _ = usegment3d.Cellpose2D_model_auto(processed[..., None], view, cp)
-            np.savez_compressed(cache, prob=prob, flow=flow)
-        probs.append(prob)
-        flows.append(flow)
-    report("u-Segment3D: aggregating orthogonal views", .7)
-    agg = parameters.get_2D_to_3D_aggregation_params()
-    agg["gradient_descent"]["gradient_decay"] = config["gradient_decay"]
-    agg["postprocess_binary"]["binary_fill_holes"] = True
-    labels, _ = usegment3d.aggregate_2D_to_3D_segmentation_direct_method(probs, flows, agg)
+    if native['segmentationMode']=='cellpose3d':
+        from atlas_cellpose_3d import predict as predict_3d
+        labels, details=predict_3d(processed,config,lambda label,fraction:report(label,.1+.7*fraction))
+        (folder/'cellpose3d.json').write_text(json.dumps(details,indent=2))
+    else:
+        cp = parameters.get_Cellpose_autotune_params()
+        cp.update(cellpose_modelname=config["model"], gpu=config["gpu"],
+                  best_diam=config["diameter"], debug_viz=False)
+        probs, flows = [], []
+        for view_index, view in enumerate(["xy", "xz", "yz"]):
+            report(f"Cellpose {model_name}: {view.upper()} inference", .1 + .2 * view_index, .2)
+            cache = folder / f"{view}.npz"
+            if cache.exists():
+                with np.load(cache) as saved:
+                    prob, flow = saved["prob"], saved["flow"]
+            else:
+                print(f"{image.stem}: Cellpose {view}", flush=True)
+                _, prob, flow, _ = usegment3d.Cellpose2D_model_auto(processed[..., None], view, cp)
+                np.savez_compressed(cache, prob=prob, flow=flow)
+            probs.append(prob)
+            flows.append(flow)
+        report("u-Segment3D: aggregating orthogonal views", .7)
+        agg = parameters.get_2D_to_3D_aggregation_params()
+        agg["gradient_descent"]["gradient_decay"] = config["gradient_decay"]
+        agg["postprocess_binary"]["binary_fill_holes"] = True
+        labels, _ = usegment3d.aggregate_2D_to_3D_segmentation_direct_method(probs, flows, agg)
     report("Cellpose: writing labels and exporting cell surfaces", .85)
     labels = labels.astype(np.uint32)
     effective_spacing = spacing * np.array(raw.shape) / np.array(labels.shape)

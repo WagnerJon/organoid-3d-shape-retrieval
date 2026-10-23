@@ -64,7 +64,7 @@ struct DiscoverShapeGroupsView: View {
                         Text("Primary methods").tag("Primary methods")
                         Text("Adjusted methods").tag("Adjusted")
                         Text("All methods").tag("All methods")
-                        if store.level == "Cells" { Text("Validation reference").tag("Validation reference") }
+                        if store.level == "Cells", store.dataset?.syntheticDemo != true { Text("Validation reference").tag("Validation reference") }
                     }.frame(width: 250)
                     Toggle("Same objects across methods", isOn: $commonOnly).toggleStyle(.checkbox)
                         .disabled(scope == "Validation reference")

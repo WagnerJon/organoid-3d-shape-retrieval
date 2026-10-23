@@ -210,7 +210,8 @@ def local_stack(entry,settings,run,logs,report,task_progress=None):
                 log.write(line);log.flush()
                 if line.startswith(('Starting ','Using completed stage:')):report(line.strip())
                 if line.startswith('@segmentation-progress '):
-                    from run_standalone_cellpose import STAGES
+                    from atlas_cellpose_3d import stage_sequence
+                    STAGES=stage_sequence(settings)
                     value=json.loads(line.split(' ',1)[1]);phase=value['stage']
                     report(value['label'])
                     if task_progress and phase in STAGES:task_progress((STAGES.index(phase)+float(value['fraction']))/len(STAGES))

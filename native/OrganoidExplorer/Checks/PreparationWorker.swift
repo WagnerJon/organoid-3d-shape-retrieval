@@ -24,14 +24,30 @@ raw=p/'raw.ome.tif';mask=p/'labels.tif'
 tifffile.imwrite(raw,labels*1000,ome=True,metadata=dict(axes='ZYX',PhysicalSizeZ=2.,PhysicalSizeY=.5,PhysicalSizeX=.5),photometric='minisblack')
 tifffile.imwrite(mask,labels,metadata={'axes':'ZYX'},photometric='minisblack')
 npy=p/'raw.npy';np.save(npy,labels*1000)
-a=inspect(npy);assert a['spacing']==[1.,1.,1.] and 'default' in a['calibrationSource'];a.update(spacing=[2.,.5,.5],labels=str(mask),labelStat=[mask.stat().st_size,mask.stat().st_mtime_ns])
+a=inspect(npy);assert a['spacing']==[2.,1.,1.] and 'assume cubic stack' in a['calibrationSource'];a.update(spacing=[2.,.5,.5],labels=str(mask),labelStat=[mask.stat().st_size,mask.stat().st_mtime_ns])
 r=dict(title='Native preparation check',inputs=[a],settings=dict(model='cpsam_v2',scale=.35,diameter=30.,gpu=False,background=True),excludeDetached=True,harmonics=False)
 (p/'request.json').write_text(json.dumps(r))
 """, temporary.path]
         try fixture.run(); fixture.waitUntilExit()
         require(fixture.terminationStatus == 0, "Fixture generation succeeds")
         let request = try JSONDecoder().decode(PreparationRequest.self, from: Data(contentsOf: temporary.appendingPathComponent("request.json")))
+        require(PreparationCalibration.assumedCubicSpacing([64,512,512]) == [8,1,1], "Missing calibration makes a square stack cubic")
+        require(PreparationCalibration.assumedCubicSpacing([64,256,512]) == [8,1,1], "Rectangular images retain equal XY pixel spacing")
+        require(PreparationCalibration.assumedCubicSpacing([1024,256,512]) == [0.5,1,1], "Deep stacks also retain X = Y = 1")
+        let estimatedGrid = OMEZarrLevel(index: 0, path: "0", dtype: "uint16", shape: [1,1,64,256,512], shapeZYX: [64,256,512], spacing: nil, origin: nil, chunkBytes: 1024)
+        let calibratedGrid = OMEZarrLevel(index: 1, path: "1", dtype: "uint16", shape: [1,1,64,128,256], shapeZYX: [64,128,256], spacing: [3,0.5,0.75], origin: nil, chunkBytes: 1024)
+        let image = OMEZarrImage(path: temporary.appendingPathComponent("image.ome.zarr").path, name: "Test image", fingerprint: "fixture", axes: ["t","c","z","y","x"], channels: ["membrane"], levels: [estimatedGrid,calibratedGrid], timepoints: 1, timestamps: [], labels: [], sourceStat: [0,0])
+        let calibrationStore = DatasetPreparationStore(root: root)
+        calibrationStore.addOMEZarr(image, channel: 0, level: 0, first: 0, last: 0, step: 1, label: nil)
+        require(calibrationStore.inputs[0].spacing == [8,1,1] && calibrationStore.inputs[0].calibrationSource.contains("estimated"), "Native OME-Zarr selection estimates only Z when calibration is missing")
+        calibrationStore.addOMEZarr(image, channel: 0, level: 1, first: 0, last: 0, step: 1, label: nil)
+        require(calibrationStore.inputs[1].spacing == [3,0.5,0.75], "Known OME-Zarr calibration is never replaced by an estimate")
         require(request.settings.flowThreshold == 0.4, "Legacy settings retain Cellpose's default flow threshold")
+        require(!request.settings.native3D, "Legacy requests retain u-Segment3D linking")
+        var nativeSettings = request.settings
+        nativeSettings.segmentationMode = "cellpose3d"; nativeSettings.flow3DSmooth = 1.5; nativeSettings.cellprobThreshold = -1; nativeSettings.minSize3D = 40
+        let nativeRoundTrip = try JSONDecoder().decode(CellposeSettings.self, from: JSONEncoder().encode(nativeSettings))
+        require(nativeRoundTrip == nativeSettings && nativeRoundTrip.native3D && nativeRoundTrip.valid3DSettings, "Native 3D controls survive saved requests")
         var thresholdSettings = request.settings; thresholdSettings.flowThreshold = 0.75
         let decodedThreshold = try JSONDecoder().decode(CellposeSettings.self, from: JSONEncoder().encode(thresholdSettings))
         require(decodedThreshold.flowThreshold == 0.75 && decodedThreshold != request.settings, "Flow threshold survives requests and marks previous slice results stale")
@@ -102,6 +118,13 @@ r=dict(title='Native preparation check',inputs=[a],settings=dict(model='cpsam_v2
         require(store.sliceRaw == nil && store.sliceResult == nil, "Changing slice clears old preview assets")
         store.reset()
         require(store.inputs.isEmpty && store.result == nil && !store.valid, "The workflow can prepare another dataset")
+        if let path = ProcessInfo.processInfo.environment["ATLAS_NATIVE3D_DATASET"] {
+            let data = try Data(contentsOf: URL(fileURLWithPath: path))
+            let nativeDataset = try JSONDecoder().decode(Dataset.self, from: data)
+            try nativeDataset.validate()
+            require(!nativeDataset.cells.isEmpty && nativeDataset.samples.count == 1, "The real native Cellpose 3D export loads in Atlas")
+            print("PASS: real native Cellpose 3D Atlas dataset; \(nativeDataset.cells.count) cells.")
+        }
         print("PASS: calibration gate; native process launch; cancellation; resume; progress; Atlas dataset validation; raw slice preview; reset.")
     }
 }

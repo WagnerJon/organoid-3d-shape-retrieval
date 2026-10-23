@@ -1,5 +1,7 @@
 # Data provenance and artifact policy
 
+The bundled **synthetic demo** contains 72 procedurally generated objects (star, sphere, ellipsoid, cactus, sausage and donut), synthetic membrane-like images, known labels and 36 precomputed representation methods. It is included for software exploration; it contains no experimental microscopy, biological labels or model weights. Its nominal units and frozen-encoder results do not establish biological or segmentation performance. See the [demo guide](../native/OrganoidExplorer/README.md#built-in-demo).
+
 The input stacks and supplied masks come from the [Mouse-Organoid-Cells-CBG release of EmbedSeg](https://github.com/juglab/EmbedSeg/releases/tag/v0.1.0). Download them from the source and cite the [EmbedSeg publication](https://arxiv.org/abs/2101.10033).
 
 The public package contains project code, configs, reports, analytical plots, aggregate/statistical tables, and selected rendered reconstruction/retrieval figures and a viewer screenshot under `docs/figures/`. These illustrate results derived from Mouse-Organoid-Cells-CBG; they do not constitute new biological ground truth. Original TIFFs, supplied masks, predicted TIFF labels, per-cell crops, per-object embeddings, source meshes and model checkpoints/weights remain in the local ignored `results/` tree or are downloaded separately.

@@ -23,6 +23,12 @@ under `inputs/Stack_*/`, with at most 256 MiB decoded source chunks admitted.
 Select a coarser level or rechunk larger chunks first. These cached TIFFs are
 used by the existing preprocessing, worker dispatch and viewer.
 
+When usable physical calibration is absent, the selected level defaults to an
+estimated cubic-stack depth: X = Y = 1 and Z = max(width, height) / slice count.
+Only Z changes; the XY field of view retains its aspect ratio. Values are
+nominal µm with unknown absolute physical scale and remain editable. Known
+level-specific calibration and saved preparation requests are preserved.
+
 `source.json` retains original OME metadata, axis definitions, level, T/C,
 spatial origin, and available DCA acquisition timestamps. The final dataset
 also records each sample's original OME-Zarr selection. Cell coordinates remain

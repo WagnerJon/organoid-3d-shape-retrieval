@@ -68,8 +68,9 @@ def inspect(path):
         if spacing is not None and not all(math.isfinite(v) and v > 0 for v in spacing):
             spacing = None
         if spacing is None:
-            spacing = [1.,1.,1.]
-            source = 'No calibration metadata; default 1 × 1 × 1 µm (editable)'
+            from atlas_calibration import assumed_cubic_spacing, ESTIMATED_SOURCE
+            spacing = assumed_cubic_spacing(series.shape)
+            source = ESTIMATED_SOURCE
         stat = path.stat()
         return dict(path=str(path), name=path.name, shape=list(series.shape), axes=series.axes,
                     dtype=str(series.dtype), spacing=spacing, calibrationSource=source,
@@ -86,6 +87,10 @@ def validate(request):
         size=execution.get('planesPerBatch',16)
         if type(size) is not int or not 1<=size<=128:raise ValueError('Planes per batch must be between 1 and 128')
     settings = request['settings']
+    from atlas_cellpose_3d import settings as native_settings
+    native=native_settings(settings)
+    if native['segmentationMode']=='cellpose3d' and (execution.get('splitStacks') or (request.get('linkingMode') or settings.get('linkingMode'))=='streamed'):
+        raise ValueError('Native Cellpose 3D uses complete stacks; disable distributed plane batches and streamed u-Segment3D linking.')
     from atlas_streamed_linking import validate_mode
     validate_mode(request.get('linkingMode') or settings.get('linkingMode'))
     if settings['model'] not in ('cpsam_v2', 'cpdino', 'cpdino-vitb'):
@@ -190,6 +195,8 @@ def prepare_stack(entry, settings, run, logs, progress, export_atlas=True):
                 if not settings['gpu']:args.append('--cpu')
                 if not settings['background']:args.append('--no-background')
                 if settings.get('linkingMode')=='streamed':args.extend(['--linking-mode','streamed'])
+                if settings.get('segmentationMode')=='cellpose3d':
+                    args.extend(['--segmentation-mode','cellpose3d','--flow-3d-smooth',settings.get('flow3DSmooth',0.),'--cellprob-threshold',settings.get('cellprobThreshold',0.),'--min-size-3d',settings.get('minSize3D',15)])
                 call(args,logs/f'{run.name}_segmentation.log',progress)
         if not (run/'qc_summary.json').exists():
             call([sys.executable,ROOT/'scripts/qc_standalone_cellpose.py',run],logs/f'{run.name}_qc.log')
@@ -264,7 +271,8 @@ def build(request, output):
         run = output/'stacks'/sample
         stage_fraction = .7/count
         def stage_progress(line):
-            from run_standalone_cellpose import STAGES
+            from atlas_cellpose_3d import stage_sequence
+            STAGES=stage_sequence(settings)
             if line.startswith('@segmentation-progress '):
                 value=json.loads(line[len('@segmentation-progress '):]);phase=value.get('stage')
                 if phase in STAGES:
@@ -272,7 +280,7 @@ def build(request, output):
                     event(f'{i+1}/{count} · {entry["name"]} · {value["label"]}',(i+(n+fraction)/len(STAGES))*stage_fraction)
             for n, stage in enumerate(STAGES):
                 if line.startswith(('Starting '+stage, 'Using completed stage: '+stage)):
-                    label = dict(preprocess='Preparing image', xy='Cellpose XY', xz='Cellpose XZ', yz='Cellpose YZ', aggregate='Linking cells in 3D', export='Building cell surfaces')[stage]
+                    label = dict(preprocess='Preparing image', xy='Cellpose XY', xz='Cellpose XZ', yz='Cellpose YZ', aggregate='Native Cellpose 3D' if settings.get('segmentationMode')=='cellpose3d' else 'Linking cells in 3D', export='Building cell surfaces')[stage]
                     event(f'{i+1}/{count} · {entry["name"]} · {label}', (i+n/len(STAGES))*stage_fraction)
         event(f'{i+1}/{count} · {entry["name"]}', i*stage_fraction)
         staging = prepare_stack(entry,settings,run,output/'logs',stage_progress)
