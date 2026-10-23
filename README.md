@@ -1,4 +1,4 @@
-# Organoid Atlas
+# Organoid Atlas - Interactive visualization and exploratory analysis of 3D cell morphology
 
 [![DOI](https://zenodo.org/badge/1382329799.svg)](https://zenodo.org/badge/latestdoi/1382329799)
 
