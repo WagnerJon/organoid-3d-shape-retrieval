@@ -36,7 +36,7 @@ class CellposeModelComparisonTests(unittest.TestCase):
             source = prepare(image,[1,.2,.2],root/'source')
             labels = np.zeros(raw.shape,dtype=np.uint32); labels[:,2:6,2:6] = 3
             runs = []
-            for index,model in enumerate(['cpsam_v2','cpdino','cpdino-vitb']):
+            for index,model in enumerate(['cpsam_v2','cpdino','cpdino-vitb','cyto3']):
                 def predict(path,config,folder,progress=None):
                     self.assertEqual(config['model'],model)
                     self.assertEqual(config['spacing_zyx_um'],source['spacing'])

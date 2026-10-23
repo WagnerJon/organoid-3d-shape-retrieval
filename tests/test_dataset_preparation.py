@@ -97,6 +97,8 @@ class PreparationTests(unittest.TestCase):
         before = (self.atlas/'dataset.json').read_bytes()
         self.assertEqual(build(self.request,self.output),self.atlas)
         self.assertEqual((self.atlas/'dataset.json').read_bytes(),before)
+        defaults = copy.deepcopy(self.request); defaults['settings'].update(localModelPath='',localModelRuntime='cellpose3',localModelSHA256='')
+        self.assertEqual(build(defaults,self.output),self.atlas)
         changed = copy.deepcopy(self.request); changed['settings']['diameter']=40
         with self.assertRaisesRegex(ValueError,'different preparation settings'):
             build(changed,self.output)

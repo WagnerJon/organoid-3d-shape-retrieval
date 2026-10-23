@@ -53,11 +53,39 @@ final class PickingSceneView: SCNView {
     }
     override func scrollWheel(with event: NSEvent) { super.scrollWheel(with: event); cameraChanged?() }
 }
+struct ReconstructionColorMap {
+    let map: PlotColorMap
+    let colors: [Int: NSColor]
+    init(cells: [Specimen], settings: PlotColorSettings, hideExcluded: Bool) {
+        let visible = cells.filter { !hideExcluded || $0.includedInAnalysis }
+        let colorMap = PlotColorMap(settings: settings, items: visible)
+        map = colorMap
+        colors = Dictionary(uniqueKeysWithValues: cells.map { item in
+            let color: NSColor
+            if !settings.feature.isEmpty { color = colorMap.color(item: item, group: 0) }
+            else if !item.includedInAnalysis { color = .systemRed }
+            else { color = Self.idColor(item.id) }
+            return (item.label, color)
+        })
+    }
+    static func idColor(_ id: String) -> NSColor {
+        // Stable across launches and independent of row order or analysis groups.
+        var hash: UInt64 = 14695981039346656037
+        for byte in id.utf8 { hash = (hash ^ UInt64(byte)) &* 1099511628211 }
+        return NSColor(calibratedHue: Double(hash % 1_000_003) / 1_000_003,
+                       saturation: 0.55 + Double((hash >> 20) % 100)/1000,
+                       brightness: 0.88, alpha: 1)
+    }
+}
+
 struct ReconstructionAppearance: Equatable {
     let selected: Int
     let isolated, hideExcluded, centered: Bool
     let excluded: Set<Int>
     let extent: [Double]
+    let coloring: PlotColorSettings
+    let highlight: Bool
+    let values: [Int: Double]
 }
 struct ReconstructionClip: Equatable {
     let enabled: Bool
@@ -80,11 +108,19 @@ struct ReconstructionView: NSViewRepresentable {
     var cameraSpan: Double? = nil
     var pointCloudURL: URL? = nil
     var link: CameraLink? = nil
+    var coloring = PlotColorSettings()
+    var highlightSelection = true
+    var capture: PlotSceneCapture? = nil
+    var seed: ReconstructionSceneSeed? = nil
     var pick: (Int) -> Void = { _ in }
     var onError: (String) -> Void = { _ in }
     var appearance: ReconstructionAppearance {
         ReconstructionAppearance(selected:selectedLabel, isolated:isolate, hideExcluded:hideExcluded, centered:centered,
-                                 excluded:Set(cells.filter { !$0.includedInAnalysis }.map(\.label)), extent:sample.extent)
+                                 excluded:Set(cells.filter { !$0.includedInAnalysis }.map(\.label)), extent:sample.extent,
+                                 coloring: coloring, highlight: highlightSelection,
+                                 values: Dictionary(uniqueKeysWithValues: cells.compactMap { item in
+                                     plotFeatureValue(item, key: coloring.feature).map { (item.label, $0) }
+                                 }))
     }
     var clipState: ReconstructionClip {
         ReconstructionClip(enabled:clipping, axis:clipping ? axis : 0, position:clipping ? sample.extent[axis]*slice : 0)
@@ -134,6 +170,17 @@ struct ReconstructionView: NSViewRepresentable {
         private(set) var appliedClip: ReconstructionClip?
         func load(view: PickingSceneView, config: ReconstructionView) {
             nodes = [:]; appliedAppearance = nil; appliedClip = nil; view.scene = SCNScene()
+            if let seed = config.seed, seed.identity == key {
+                view.scene = seed.scene; view.pointOfView = seed.camera
+                seed.scene.rootNode.enumerateChildNodes { node, _ in
+                    if let label = node.name.flatMap(Int.init) { self.nodes[label] = node }
+                }
+                reset = config.reset; lastSpan = config.cameraSpan
+                view.defaultCameraController.target = SCNVector3Zero
+                updateMaterials(config: config)
+                return
+            }
+            Task { @MainActor [weak capture = config.capture] in capture?.setLoading(true) }
             let loadingKey = key
             let urls: [(Int,URL,Bool)] = config.cells.map { cell in
                 let isPointCloud = cell.label == config.selectedLabel && config.pointCloudURL != nil
@@ -178,8 +225,26 @@ struct ReconstructionView: NSViewRepresentable {
                         nodes[label] = node; root.addChildNode(node)
                     }
                     view.scene?.rootNode.addChildNode(root)
+                    addAxes(scene: view.scene!, extent: extent)
                     frame(config: current); updateMaterials(config: current)
-                } catch { if key == loadingKey { config.onError(error.localizedDescription) } }
+                    current.capture?.setLoading(false)
+                } catch { if key == loadingKey { current?.capture?.setLoading(false); config.onError(error.localizedDescription) } }
+            }
+        }
+        func addAxes(scene: SCNScene, extent: [Double]) {
+            let span = extent.max() ?? 80
+            let origin = SCNVector3(-extent[2]/2, -extent[1]/2, -extent[0]/2)
+            for axis in 0..<3 {
+                let length = extent[2-axis]
+                let sizes = (0..<3).map { $0 == axis ? length : span*0.002 }
+                let line = SCNBox(width: sizes[0], height: sizes[1], length: sizes[2], chamferRadius: 0)
+                line.firstMaterial?.lightingModel = .constant
+                line.firstMaterial?.diffuse.contents = NSColor.gray
+                let node = SCNNode(geometry: line); node.name = "plot-axis:\(axis)"
+                node.position = SCNVector3(origin.x + (axis == 0 ? CGFloat(length/2) : 0),
+                                          origin.y + (axis == 1 ? CGFloat(length/2) : 0),
+                                          origin.z + (axis == 2 ? CGFloat(length/2) : 0))
+                node.isHidden = true; scene.rootNode.addChildNode(node)
             }
         }
         func frame(config: ReconstructionView) {
@@ -201,7 +266,7 @@ struct ReconstructionView: NSViewRepresentable {
             guard appearanceChanged || clipChanged else { return }
             SCNTransaction.begin(); SCNTransaction.animationDuration = 0
             if appearanceChanged {
-                if let root = view?.scene?.rootNode.childNode(withName: "surfaces", recursively: false) {
+                if let root = view?.scene?.rootNode.childNode(withName: "surfaces", recursively: true) {
                     let extent = config.sample.extent
                     root.position = SCNVector3(-extent[2]/2, -extent[1]/2, -extent[0]/2)
                     if config.centered && config.isolate, let node = nodes[config.selectedLabel] {
@@ -209,15 +274,16 @@ struct ReconstructionView: NSViewRepresentable {
                         root.position = SCNVector3(-(bounds.min.x+bounds.max.x)/2, -(bounds.min.y+bounds.max.y)/2, -(bounds.min.z+bounds.max.z)/2)
                     }
                 }
+                let colors = ReconstructionColorMap(cells: config.cells, settings: config.coloring, hideExcluded: config.hideExcluded)
                 for (label, node) in nodes {
                     let selected = label == config.selectedLabel
                     let excluded = appearance.excluded.contains(label)
                     node.isHidden = (config.hideExcluded && excluded) || (config.isolate && config.selectedLabel > 0 && !selected)
                     let material = node.geometry?.firstMaterial ?? SCNMaterial()
                     material.lightingModel = config.pointCloudURL != nil && selected ? .constant : .physicallyBased
-                    material.diffuse.contents = excluded ? NSColor.systemRed : selected ? NSColor.systemOrange : NSColor(calibratedHue: CGFloat(label % 11)/11, saturation: 0.55, brightness: 0.83, alpha: 1)
+                    material.diffuse.contents = selected && config.highlightSelection && config.coloring.feature.isEmpty && !excluded ? NSColor.systemOrange : colors.colors[label] ?? .gray
                     material.roughness.contents = 0.65
-                    material.emission.contents = selected ? NSColor(calibratedRed: 0.22, green: 0.09, blue: 0.01, alpha: 1) : NSColor.black
+                    material.emission.contents = selected && config.highlightSelection ? NSColor(calibratedRed: 0.22, green: 0.09, blue: 0.01, alpha: 1) : NSColor.black
                     material.isDoubleSided = true
                     node.geometry?.materials = [material]
                 }
@@ -232,6 +298,17 @@ struct ReconstructionView: NSViewRepresentable {
                 appliedClip = clipping
             }
             SCNTransaction.commit()
+            if let capture = config.capture, let view, !nodes.isEmpty {
+                let colors = ReconstructionColorMap(cells: config.cells, settings: config.coloring, hideExcluded: config.hideExcluded)
+                let e = config.sample.extent
+                let origin = SCNVector3(-e[2]/2,-e[1]/2,-e[0]/2)
+                let endpoints = [SCNVector3(origin.x+CGFloat(e[2]),origin.y,origin.z),
+                                 SCNVector3(origin.x,origin.y+CGFloat(e[1]),origin.z),
+                                 SCNVector3(origin.x,origin.y,origin.z+CGFloat(e[0]))]
+                capture.update(view: view, colors: Dictionary(uniqueKeysWithValues: colors.colors.map { (String($0.key), $0.value) }),
+                               baseScales: [:], map: colors.map, groups: [], reconstruction: true, identity: key,
+                               axisEndpoints: endpoints, categoricalLegend: config.hideExcluded ? "Random color per cell ID · excluded cells hidden" : "Random color per cell ID · red = excluded")
+            }
         }
     }
 }

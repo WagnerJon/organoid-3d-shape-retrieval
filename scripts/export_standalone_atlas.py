@@ -118,12 +118,15 @@ def export(run, output, sample_id='GFP24h_MV5'):
                       labelGrid=dict(shape=shape.tolist(), spacingZYXum=spacing.tolist(), rawGridOffsetZYXum=raw_offset.tolist(), coordinates='Grid-local voxel centers in micrometers', linkingMode=info.get('linkingMode','standard'), segmentationMode=info.get('segmentationMode','usegment3d')),
                       sourceImage=info['source'], sourceLabels=str(run / 'labels_native.ome.tif'), meshCount=len(cells))],
         traditionalFeatures=features, normalization=dict(mean=mean.tolist(), std=std.tolist()),
-        provenance=f"Cellpose {info['model']} ({'native 3D dynamics' if info.get('segmentationMode')=='cellpose3d' else 'u-Segment3D linking'}), processing scale {info['scale']}. "
+        provenance=("FOCUS-3D instance segmentation restored to the original raw grid. " if info.get('segmentationMode')=='focus3d' else f"Cellpose {info['model']} ({'native 3D dynamics' if info.get('segmentationMode')=='cellpose3d' else 'u-Segment3D linking'}), processing scale {info['scale']}. ")+
         f"Original surfaces in calibrated micrometers; spacing Z/Y/X {info['spacingZYXum']}. No mesh smoothing. "
         f"All {len(cells)} candidate objects retained; {int((~qc).sum())} flagged for review. "
         'Membership inclusion is provisional until dataset preparation classifies detached cells. '
         'Raw preview is sampled to at most 144 voxels per axis. Organoid denotes an image stack; '
         'no biological labels or independent accuracy validation are supplied.')
+    if info.get('segmentationMode')=='focus3d':
+        document['samples'][0]['segmentation']=dict(method='focus3d',settings=info['focusIdentity']['focusSettings'],
+            checkpointSHA256=info['focusIdentity']['checkpointSHA256'],configSHA256=info['focusIdentity']['configSHA256'])
     (output / 'dataset.json').write_text(json.dumps(document, allow_nan=False, separators=(',', ':')))
     print(f'Exported {len(cells)} cells ({int(qc.sum())} QC passing), preview {target.tolist()} → {output}', flush=True)
 

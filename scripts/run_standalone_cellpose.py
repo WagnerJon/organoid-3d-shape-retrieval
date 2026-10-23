@@ -11,6 +11,7 @@ import argparse,json,hashlib,subprocess,sys,time,csv,resource,signal
 sys.path.insert(0,str(ROOT/'vendor/u-segment3D'))
 
 STAGES=['preprocess','xy','xz','yz','aggregate','export']
+from atlas_cellpose_models import MODEL_NAMES
 
 def save(p,value):
     def encode(x):
@@ -47,6 +48,8 @@ def setup(args):
     from importlib.metadata import version,PackageNotFoundError
     folder=args.output.resolve();source=args.input.resolve();meta=calibration(source, getattr(args, "spacing", None))
     core=dict(source=str(source),sourceStat=source_stat(source),scale=args.scale,diameterProcessedPx=args.diameter,model=getattr(args,'model','cpsam_v2'),gpu=not getattr(args,'cpu',False),backgroundCorrection=not getattr(args,'no_background',False),binaryFillHoles=False,gradientDecay=.05,**meta)
+    from atlas_cellpose_models import local_fields
+    core.update(local_fields(dict(model=core['model'],localModelPath=getattr(args,'local_model_path',''),localModelRuntime=getattr(args,'local_model_runtime','cellpose3'),localModelSHA256=getattr(args,'local_model_sha256','')),freeze=True))
     from atlas_cellpose_3d import settings as native_settings
     native = native_settings(dict(segmentationMode=getattr(args,'segmentation_mode','usegment3d'), flow3DSmooth=getattr(args,'flow_3d_smooth',0.), cellprobThreshold=getattr(args,'cellprob_threshold',0.), minSize3D=getattr(args,'min_size_3d',15)))
     if native['segmentationMode']=='cellpose3d':core.update(native)
@@ -73,7 +76,9 @@ def setup(args):
     for name in ['numpy','scipy','scikit-image','cellpose','torch','u-Segment3D','tifffile','trimesh']:
         try:runtime[name]=version(name)
         except PackageNotFoundError:pass
-    config=dict(**core,sourceSHA256=digest(source),checkpointSHA256=digest(ROOT/'.cache/cellpose'/core['model']) if (ROOT/'.cache/cellpose'/core['model']).is_file() else 'Downloaded by Cellpose on first inference',runtime=runtime,
+    from atlas_cellpose_models import model_metadata,weights_path
+    weights=weights_path(core['model'],core)
+    config=dict(**core,sourceSHA256=digest(source),checkpointSHA256=digest(weights) if weights.is_file() else 'Downloaded by Cellpose on first inference',runtime=runtime,cellposeRuntime=model_metadata(core['model'],core),
                 scriptSHA256=digest(__file__),created=time.strftime('%Y-%m-%dT%H:%M:%S%z'),execution='Native Cellpose 3D; whole-volume masks' if native['segmentationMode']=='cellpose3d' else 'Separate processes; sequential views; '+('disk-backed fine-grid linking' if mode=='streamed' else 'whole-volume aggregation'))
     save(p,config);(folder/'logs').mkdir();(folder/'predictions').mkdir();(folder/'script_snapshot.py').write_bytes(Path(__file__).read_bytes())
     segmentation_note='Native Cellpose do_3D=True on the isotropic processing grid; no u-Segment3D linking. MPS prediction uses CPU 3D mask formation.' if native['segmentationMode']=='cellpose3d' else 'XY, XZ and YZ predictions are merged by u-Segment3D (200 gradient-descent iterations, decay 0.05). Optional whole-volume binary hole filling is disabled.'
@@ -141,9 +146,10 @@ def worker(folder,stage):
         import torch
         from segment3D import parameters
         use_gpu=cfg.get('gpu',True) and (torch.backends.mps.is_available() or torch.cuda.is_available())
-        if cfg.get('linkingMode')=='streamed':
+        from atlas_cellpose_models import explicit_inference, model_metadata, local_fields
+        if cfg.get('linkingMode')=='streamed' or explicit_inference(cfg):
             from atlas_streamed_linking import infer_view
-            details=infer_view(folder,stage,dict(model=cfg['model'],gpu=use_gpu,diameter=cfg['diameterProcessedPx']))
+            details=infer_view(folder,stage,dict(model=cfg['model'],gpu=use_gpu,diameter=cfg['diameterProcessedPx'],**local_fields(cfg)))
         else:
             from segment3D import usegment3d
             processed=np.load(folder/'processed.npy',mmap_mode='r');cp=parameters.get_Cellpose_autotune_params()
@@ -154,6 +160,7 @@ def worker(folder,stage):
             assert finite(prob) and finite(flow)
             save_array(folder/'predictions'/f'{stage}_prob.npy',prob.astype(np.float32,copy=False));save_array(folder/'predictions'/f'{stage}_flow.npy',flow.astype(np.float32,copy=False))
             details=dict(view=stage,shape=list(prob.shape),parameters=cp,device='GPU' if use_gpu else 'CPU')
+        details['modelRuntime']=model_metadata(cfg['model'],cfg)
     elif stage=='aggregate':
         if cfg.get('segmentationMode')=='cellpose3d':
             from atlas_cellpose_3d import predict
@@ -232,7 +239,7 @@ def export(folder,cfg):
         lo,hi=np.percentile(im,[1,99.8]);norm=np.clip((im.astype(np.float32)-lo)/max(float(hi-lo),1),0,1)
         axs[0,axis].imshow(norm,cmap='gray');axs[1,axis].imshow(label2rgb(lab,image=norm,colors=colors,alpha=.45,bg_label=0));axs[0,axis].set_title(f'{name} raw · middle slice');axs[1,axis].set_title(f'{name} prediction overlay')
         for row in [0,1]:axs[row,axis].axis('off')
-    method='Native Cellpose 3D' if cfg.get('segmentationMode')=='cellpose3d' else 'Cellpose + u-Segment3D'
+    method='FOCUS-3D' if cfg.get('segmentationMode')=='focus3d' else 'Native Cellpose 3D' if cfg.get('segmentationMode')=='cellpose3d' else 'Cellpose + u-Segment3D'
     fig.suptitle(f'{method} · {len(rows)} predicted objects · scale {cfg["scale"]}\nTIFF calibration; review predictions before quantitative use',fontsize=13);fig.tight_layout();fig.savefig(folder/'preview.png',dpi=150);plt.close(fig)
     for name,expected in [('labels_native.ome.tif',tuple(native)),('labels_processed.ome.tif',labels.shape)]:
         with tifffile.TiffFile(folder/name) as t:assert t.series[0].shape==expected and t.series[0].dtype==np.uint32 and t.is_ome
@@ -283,7 +290,8 @@ def run(args):
     summary=json.loads((folder/'summary.json').read_text());save(folder/'complete.json',dict(status='complete',sourceUnchanged=True,summary=summary,stages=[json.loads((folder/f'{s}.completed.json').read_text()) for s in all_stages]));save(folder/'status.json',dict(status='complete',**summary));print('COMPLETE',json.dumps(summary),flush=True)
 
 def main():
-    p=argparse.ArgumentParser(description=__doc__);p.add_argument('--input',type=Path);p.add_argument('--output',type=Path,required=True);p.add_argument('--scale',type=float,default=.35);p.add_argument('--diameter',type=float,default=30);p.add_argument('--stage',choices=STAGES);p.add_argument('--through-stage',choices=STAGES);p.add_argument('--spacing',type=float,nargs=3);p.add_argument('--model',choices=['cpsam_v2','cpdino','cpdino-vitb'],default='cpsam_v2');p.add_argument('--cpu',action='store_true');p.add_argument('--no-background',action='store_true');p.add_argument('--linking-mode',choices=['standard','streamed'],default='standard')
+    p=argparse.ArgumentParser(description=__doc__);p.add_argument('--input',type=Path);p.add_argument('--output',type=Path,required=True);p.add_argument('--scale',type=float,default=.35);p.add_argument('--diameter',type=float,default=30);p.add_argument('--stage',choices=STAGES);p.add_argument('--through-stage',choices=STAGES);p.add_argument('--spacing',type=float,nargs=3);p.add_argument('--model',choices=MODEL_NAMES,default='cpsam_v2');p.add_argument('--cpu',action='store_true');p.add_argument('--no-background',action='store_true');p.add_argument('--linking-mode',choices=['standard','streamed'],default='standard')
+    p.add_argument('--local-model-path',default='');p.add_argument('--local-model-runtime',choices=['cellpose3','cellpose4'],default='cellpose3');p.add_argument('--local-model-sha256',default='')
     p.add_argument('--segmentation-mode',choices=['usegment3d','cellpose3d'],default='usegment3d');p.add_argument('--flow-3d-smooth',type=float,default=0.);p.add_argument('--cellprob-threshold',type=float,default=0.);p.add_argument('--min-size-3d',type=int,default=15)
     args=p.parse_args()
     if args.stage:worker(args.output,args.stage)

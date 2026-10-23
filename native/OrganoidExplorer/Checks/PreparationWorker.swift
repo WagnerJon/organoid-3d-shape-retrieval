@@ -27,6 +27,10 @@ npy=p/'raw.npy';np.save(npy,labels*1000)
 a=inspect(npy);assert a['spacing']==[2.,1.,1.] and 'assume cubic stack' in a['calibrationSource'];a.update(spacing=[2.,.5,.5],labels=str(mask),labelStat=[mask.stat().st_size,mask.stat().st_mtime_ns])
 r=dict(title='Native preparation check',inputs=[a],settings=dict(model='cpsam_v2',scale=.35,diameter=30.,gpu=False,background=True),excludeDetached=True,harmonics=False)
 (p/'request.json').write_text(json.dumps(r))
+from atlas_tiff import describe
+movie=p/'movie.ome.tif'
+tifffile.imwrite(movie,np.stack([labels*1000,labels*2000]),ome=True,metadata=dict(axes='TZYX',PhysicalSizeZ=2.,PhysicalSizeY=.5,PhysicalSizeX=.5),photometric='minisblack')
+(p/'tiff-image.json').write_text(json.dumps(describe(movie)['images'][0]))
 """, temporary.path]
         try fixture.run(); fixture.waitUntilExit()
         require(fixture.terminationStatus == 0, "Fixture generation succeeds")
@@ -42,8 +46,60 @@ r=dict(title='Native preparation check',inputs=[a],settings=dict(model='cpsam_v2
         require(calibrationStore.inputs[0].spacing == [8,1,1] && calibrationStore.inputs[0].calibrationSource.contains("estimated"), "Native OME-Zarr selection estimates only Z when calibration is missing")
         calibrationStore.addOMEZarr(image, channel: 0, level: 1, first: 0, last: 0, step: 1, label: nil)
         require(calibrationStore.inputs[1].spacing == [3,0.5,0.75], "Known OME-Zarr calibration is never replaced by an estimate")
+        let tiffImage = try JSONDecoder().decode(TIFFImage.self, from: Data(contentsOf: temporary.appendingPathComponent("tiff-image.json")))
+        let tiffStore = DatasetPreparationStore(root: root)
+        tiffStore.addTIFF(tiffImage, channel: 0, first: 0, last: 1, step: 1)
+        require(tiffStore.inputs.count == 2 && Set(tiffStore.inputs.map(\.id)).count == 2, "TIFF frames have distinct identities on the selected Z/Y/X grid")
+        require(tiffStore.inputs.allSatisfy { $0.shape == [20,36,40] && $0.spacing == [2,0.5,0.5] }, "TIFF time never becomes depth; calibration remains physical")
+        tiffStore.addTIFF(tiffImage, channel: 0, first: 0, last: 1, step: 1)
+        require(tiffStore.inputs.count == 2, "Repeated TIFF selections are not duplicated")
+        let tiffRoundTrip = try JSONDecoder().decode(PreparationInput.self, from: JSONEncoder().encode(tiffStore.inputs[1]))
+        require(tiffRoundTrip.tiffSelection?.time == 1 && tiffRoundTrip.tiffSelection?.axes == "TZYX", "TIFF series/channel/time and original axes survive saved requests")
+        tiffStore.previewSlice(input: tiffStore.inputs[1], plane: "xz", index: 12, segment: false)
+        let tiffPreviewStarted = Date()
+        while tiffStore.busy && Date().timeIntervalSince(tiffPreviewStarted) < 20 { try await Task.sleep(nanoseconds: 100_000_000) }
+        require(tiffStore.sliceRaw != nil && tiffStore.error == nil, "Native TIFF frame preview succeeds: \(tiffStore.error ?? tiffStore.log.suffix(1000).description)")
+        tiffStore.clearSlice()
         require(request.settings.flowThreshold == 0.4, "Legacy settings retain Cellpose's default flow threshold")
         require(!request.settings.native3D, "Legacy requests retain u-Segment3D linking")
+        for name in ["cyto3"] {
+            var classic = request.settings; classic.model = name
+            let roundTrip = try CellposeSettings.fromJSON(classic.json())
+            require(roundTrip.model == name && CellposeSettings.models.contains(name), "Classic model choice survives saved requests and comparison settings")
+        }
+        let localCheckpoint = temporary.appendingPathComponent("checkpoint without extension")
+        try Data("local checkpoint fixture".utf8).write(to: localCheckpoint)
+        var localSettings = request.settings; localSettings.model = "local"
+        require(!localSettings.validModel, "Local models require a readable checkpoint file")
+        localSettings.localModelPath = localCheckpoint.path; localSettings.localModelRuntime = "cellpose4"
+        localSettings.localModelSHA256 = String(repeating: "a", count: 64)
+        let localRoundTrip = try CellposeSettings.fromJSON(localSettings.json())
+        require(localRoundTrip == localSettings && localRoundTrip.validModel, "Local path/runtime/checksum survive comparison and preparation settings")
+        localSettings.localModelPath = temporary.path
+        require(!localSettings.validModel, "Directories cannot be selected as checkpoint files")
+        require(request.segmentationMethod == nil && request.focusSettings == nil, "Legacy requests retain Cellpose as the initial method")
+        var focusRequest = request
+        focusRequest.segmentationMethod = "focus3d"
+        var focusSettings = FocusSettings(); focusSettings.cell_radius = 30; focusSettings.score_threshold = 0.25
+        focusSettings.mask_threshold = 0.65; focusSettings.stride_z = 12; focusSettings.min_size = 80
+        focusRequest.focusSettings = focusSettings
+        let focusRoundTrip = try JSONDecoder().decode(PreparationRequest.self, from: JSONEncoder().encode(focusRequest))
+        require(focusRoundTrip.segmentationMethod == "focus3d" && focusRoundTrip.focusSettings == focusSettings, "FOCUS method and parameter choices survive saved requests")
+        var focusInput = request.inputs[0]; focusInput.labels = nil; focusInput.labelStat = nil
+        focusInput.shape = [32,96,96]; focusInput.spacing = [2,0.5,0.5]
+        let focusPlan = FocusPreparationMemoryPlan(input: focusInput, settings: focusSettings, totalMemory: 16*1024*1024*1024)!
+        require(focusPlan.shape == [32,48,48] && focusPlan.fits, "FOCUS memory plan follows radius resampling and coarse-Z behavior")
+        focusInput.spacing = [0.5,0.5,0.5]
+        require(FocusPreparationMemoryPlan(input: focusInput, settings: focusSettings)!.shape == [16,48,48], "Isotropic FOCUS resamples all axes")
+        let focusStore = DatasetPreparationStore(root: root)
+        focusStore.segmentationMethod = "focus3d"; focusStore.inputs = [focusInput]
+        focusStore.confirmed = true; focusStore.output = temporary.appendingPathComponent("focus-output")
+        focusStore.focusSettings = focusSettings
+        require(!focusStore.valid, "FOCUS preparation requires available model weights")
+        focusStore.focusSettings.stride_z = 32
+        require(!focusStore.focusSettings.valid && !focusStore.valid, "Invalid FOCUS overlap settings cannot start")
+        focusStore.previewSlice(input: focusInput, plane: "xy", index: 0, segment: true)
+        require(!focusStore.busy && focusStore.error?.contains("complete 3D stack") == true, "FOCUS never silently dispatches a Cellpose slice test")
         var nativeSettings = request.settings
         nativeSettings.segmentationMode = "cellpose3d"; nativeSettings.flow3DSmooth = 1.5; nativeSettings.cellprobThreshold = -1; nativeSettings.minSize3D = 40
         let nativeRoundTrip = try JSONDecoder().decode(CellposeSettings.self, from: JSONEncoder().encode(nativeSettings))

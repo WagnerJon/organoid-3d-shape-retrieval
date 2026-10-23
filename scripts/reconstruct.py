@@ -127,7 +127,11 @@ def predict(image, config, folder, progress=None):
                     prob, flow = saved["prob"], saved["flow"]
             else:
                 print(f"{image.stem}: Cellpose {view}", flush=True)
-                _, prob, flow, _ = usegment3d.Cellpose2D_model_auto(processed[..., None], view, cp)
+                from atlas_cellpose_models import explicit_inference, legacy_view
+                if explicit_inference(config):
+                    _,prob,flow,_=legacy_view(processed,view,model_name,config['gpu'],config['diameter'],local_settings=config)
+                else:
+                    _, prob, flow, _ = usegment3d.Cellpose2D_model_auto(processed[..., None], view, cp)
                 np.savez_compressed(cache, prob=prob, flow=flow)
             probs.append(prob)
             flows.append(flow)

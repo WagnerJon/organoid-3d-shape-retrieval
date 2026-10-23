@@ -352,7 +352,11 @@ struct SegAgreement: Codable {
         if method == "focus3d" && !focusReady { error = "Install FOCUS-3D with zsh scripts/setup_focus3d.sh and select a downloaded .pth checkpoint."; runQueue = []; return }
         let settings: [String: Any]
         do {
-            if method == "cellpose" { settings = try (side == 1 ? cellposeA : cellposeB).json() }
+            if method == "cellpose" {
+                let selected = side == 1 ? cellposeA : cellposeB
+                guard selected.validModel else { throw DataError.invalid("Choose an existing Cellpose checkpoint file.") }
+                settings = try selected.json()
+            }
             else if method == "focus3d" { settings = try focusSettings.json() }
             else { settings = try (runningTrial ? trialSettings : comparisonSettings).json() }
         }

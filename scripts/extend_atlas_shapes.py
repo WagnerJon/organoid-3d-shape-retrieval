@@ -126,10 +126,10 @@ def geometry(row):
         return data['points'], data['axes']
 
 
-def lite(missing, device):
+def lite(missing, device, kinds=('invariant', 'cnn')):
     from shapeembed3d_core import ShapeEmbed3D, fps_indices, edm
     started = time.monotonic(); rows = missing.to_dict('records')
-    for kind in ('invariant', 'cnn'):
+    for kind in kinds:
         path = OUT/(f'lite_{kind}.npz')
         if path.exists():
             continue
@@ -156,13 +156,16 @@ def lite(missing, device):
         if device == 'mps': torch.mps.empty_cache()
 
 
-def point_mae(missing, device):
+def point_mae(missing, device, arms=('pretrained', 'adapted'), kinds=None):
     from point_mae_reference import model, encode
     from run_point_mae_reference import draw
     rows = missing.to_dict('records'); started = time.monotonic()
-    for arm in ('pretrained', 'adapted'):
+    for arm in arms:
         path = OUT/(f'point_mae_{arm}.npz')
-        if path.exists(): continue
+        wanted = ['native','pose_average'] if kinds is None else kinds[arm]
+        cached = dict(np.load(path)) if path.exists() else {}
+        needed = [kind for kind in wanted if kind not in cached]
+        if not needed: continue
         m = model()
         if arm == 'adapted':
             state = torch.load(ROOT/'results/point_mae/best.pt', map_location='cpu', weights_only=False)
@@ -176,51 +179,61 @@ def point_mae(missing, device):
                 for row in batch:
                     pool, basis = geometry(row); clouds.append(draw(pool, row['inference_index'])); axes.append(basis)
                 clouds = np.stack(clouds); axes = np.stack(axes)
-                native.extend(encode(m, torch.tensor(clouds, device=device)).cpu().numpy())
-                poses = []
-                for sign in SIGNS:
-                    pose = (clouds@axes*sign).astype(np.float32)
-                    poses.append(encode(m, torch.tensor(pose, device=device)).cpu().numpy())
-                averaged.extend(np.mean(poses, axis=0))
+                if 'native' in needed:
+                    native.extend(encode(m, torch.tensor(clouds, device=device)).cpu().numpy())
+                if 'pose_average' in needed:
+                    poses = []
+                    for sign in SIGNS:
+                        pose = (clouds@axes*sign).astype(np.float32)
+                        poses.append(encode(m, torch.tensor(pose, device=device)).cpu().numpy())
+                    averaged.extend(np.mean(poses, axis=0))
                 if first % 40 == 0 or first+8 >= len(rows):
                     status('Point-MAE '+arm, min(first+8, len(rows)), len(rows), started)
-        save(path, ids=missing.cell_id.to_numpy(dtype=str), native=np.asarray(native), pose_average=np.asarray(averaged))
+        cached['ids'] = missing.cell_id.to_numpy(dtype=str)
+        if 'native' in needed: cached['native'] = np.asarray(native)
+        if 'pose_average' in needed: cached['pose_average'] = np.asarray(averaged)
+        save(path, **cached)
         del m
         if device == 'mps': torch.mps.empty_cache()
 
 
-def initialize_allen(device):
+def initialize_allen(device, heads=('pretrained', 'head_decoder')):
     global _MODEL, _HEADS, _DEVICE
     from allen_reference_core import AllenModel
     torch.set_num_threads(2); _DEVICE = device
     if device == 'mps': torch.mps.set_per_process_memory_fraction(.45)
     _MODEL = AllenModel().to(device).eval()
     released = copy.deepcopy(_MODEL.encoder.final_conv[-1]).cpu().eval()
-    adapted = copy.deepcopy(released)
-    state = torch.load(ROOT/'results/allen_reference/head_decoder/best.pt', map_location='cpu', weights_only=False)
-    if state['manifest_sha256'] != sha256(ROOT/'results/allen_reference/manifest.csv'):
-        raise ValueError('Allen checkpoint cohort mismatch')
-    adapted.load_state_dict({k.removeprefix('head.'): v for k, v in state['model'].items() if k.startswith('head.')}, strict=True)
-    _HEADS = dict(pretrained=released, head_decoder=adapted.eval())
+    _HEADS = {'pretrained': released} if 'pretrained' in heads else {}
+    if 'head_decoder' in heads:
+        adapted = copy.deepcopy(released)
+        state = torch.load(ROOT/'results/allen_reference/head_decoder/best.pt', map_location='cpu', weights_only=False)
+        if state['manifest_sha256'] != sha256(ROOT/'results/allen_reference/manifest.csv'):
+            raise ValueError('Allen checkpoint cohort mismatch')
+        adapted.load_state_dict({k.removeprefix('head.'): v for k, v in state['model'].items() if k.startswith('head.')}, strict=True)
+        _HEADS['head_decoder'] = adapted.eval()
 
 
 def allen_one(row):
     from allen_reference_core import chunked_encode
     path = OUT/'allen'/f"{row['original_index']:04d}.npz"
+    cached = {}
     if path.exists():
         with np.load(path) as data:
-            if str(data['source_hash']) != row['source_mesh_sha256'] or not all(np.isfinite(data[k]).all() for k in _HEADS):
+            if str(data['source_hash']) != row['source_mesh_sha256'] or not all(np.isfinite(data[k]).all() for k in _HEADS if k in data):
                 raise ValueError('Stale/invalid Allen cache')
-        return row['cell_id'], _DEVICE
+            if all(k in data for k in _HEADS): return row['cell_id'], _DEVICE
+            cached = {key: data[key].copy() for key in data.files}
     pool, _ = geometry(row); rng = np.random.default_rng(20261112+row['inference_index']*17)
     points = pool[rng.integers(len(pool), size=8192)].copy()
     with torch.no_grad():
-        features = chunked_encode(_MODEL.encoder, torch.tensor(points[None], device=_DEVICE),
+        features = torch.tensor(cached['features'][None]) if 'features' in cached else chunked_encode(_MODEL.encoder, torch.tensor(points[None], device=_DEVICE),
                                   chunk=512 if _DEVICE == 'cpu' else 256, return_features=True).cpu()
         values = {key: head(features).norm(dim=-1).numpy()[0].astype(float) for key, head in _HEADS.items()}
     if not all(np.isfinite(value).all() for value in values.values()):
         raise ValueError('Nonfinite Allen output')
-    save(path, **values, features=features.numpy()[0], source_hash=row['source_mesh_sha256'], device=_DEVICE)
+    cached.update(**values, features=features.numpy()[0], source_hash=row['source_mesh_sha256'], device=_DEVICE)
+    save(path, **cached)
     return row['cell_id'], _DEVICE
 
 

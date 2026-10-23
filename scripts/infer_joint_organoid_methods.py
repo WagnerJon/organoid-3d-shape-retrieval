@@ -148,33 +148,38 @@ def prepare():
     return frame
 
 
-def learned(frame, stage):
+def learned(frame, stage, keys=None):
     import torch
     import extend_atlas_shapes as extension
     torch.set_num_threads(2)
     memory_limit(.45)
     extension.OUT = OUT
     if stage == 'lite':
-        extension.lite(frame, DEVICE)
+        kinds = [kind for kind in ('invariant', 'cnn') if keys is None or any(key.startswith(f'shapeembed3d_{kind}_') for key in keys)]
+        extension.lite(frame, DEVICE, kinds=kinds)
     elif stage == 'point-mae':
-        extension.point_mae(frame, DEVICE)
+        arms = [arm for arm in ('pretrained', 'adapted') if keys is None or any(key.startswith(f'point_mae_{arm}_') for key in keys)]
+        kinds = {arm: [kind for kind in ('native', 'pose_average') if keys is None or any(key.startswith(f'point_mae_{arm}_{kind}_') for key in keys)] for arm in arms}
+        extension.point_mae(frame, DEVICE, arms=arms, kinds=kinds)
     else:
         # A single bounded worker keeps the full 8,192-point Allen encoder from
         # competing with another model for the machine's shared 16 GB memory.
         target = OUT/'allen_codes.npz'
-        if target.exists():
-            return
-        extension.initialize_allen(DEVICE)
+        heads = [kind for kind in ('pretrained', 'head_decoder') if keys is None or any(key.startswith(f'allen_{kind}_') for key in keys)]
+        cached = dict(np.load(target)) if target.exists() else {}
+        if set(heads).issubset(cached): return
+        extension.initialize_allen(DEVICE, heads=heads)
         for index, row in enumerate(frame.to_dict('records')):
             extension.allen_one(row)
             if (index+1) % 5 == 0 or index+1 == len(frame):
                 progress('Allen 8192-point encoder', index+1, len(frame))
-        values = {key: [] for key in ['pretrained', 'head_decoder']}
+        values = {key: [] for key in heads}
         for index in range(len(frame)):
             with np.load(OUT/'allen'/f'{index:04d}.npz') as a:
                 for key in values:
                     values[key].append(a[key])
-        npz(target, ids=frame.cell_id.to_numpy(dtype=str), **{k: np.asarray(v) for k, v in values.items()})
+        cached.update(ids=frame.cell_id.to_numpy(dtype=str), **{k: np.asarray(v) for k, v in values.items()})
+        npz(target, **cached)
 
 
 def pointnet(frame):
@@ -325,7 +330,7 @@ def image_inputs(frame, sources=None):
     save(target/'complete.json', dict(objects=n, notes=notes, preprocessing='Original per-stack percentile normalization; physical 40 µm context FOV; original masked size-normalized crop. Bounded interpolation windows replace full-stack float32 copies.'))
 
 
-def image_codes(frame):
+def image_codes(frame, keys=None):
     import torch
     from simclr3d_core import ResNet3DSimCLR
     torch.set_num_threads(2)
@@ -334,6 +339,8 @@ def image_codes(frame):
     variants = [('simclr3d', 'mask'), ('simclr3d_raw', 'context'), ('simclr3d_raw_isolated', 'isolated'),
                 ('icone3d_raw_isolated', 'isolated'), ('icone3d_raw_context', 'context')]
     for key, source in variants:
+        if keys is not None and key not in keys:
+            continue
         path = OUT/f'{key}_codes.npz'
         if path.exists():
             continue
@@ -397,51 +404,63 @@ def harmonic_codes(frame):
 _CAJAL_CELLS = None
 _CAJAL_LANDMARKS = None
 _CAJAL_PATH = None
+_CAJAL_PARTS = None
 
 
-def cajal_initialize(folder):
-    global _CAJAL_CELLS, _CAJAL_LANDMARKS, _CAJAL_PATH
+def cajal_initialize(folder, parts=('distances','profile')):
+    global _CAJAL_CELLS, _CAJAL_LANDMARKS, _CAJAL_PATH, _CAJAL_PARTS
     from cajal.qgw import quantized_icdm
     from scipy.spatial.distance import cdist
     _CAJAL_PATH = Path(folder)
+    _CAJAL_PARTS = parts
     u = np.full(128, 1/128)
     points = np.load(_CAJAL_PATH/'surfaces.npz')['points']
-    fit = np.load(ROOT/'results/harmonics_cajal/cajal_profile_adjustment.npz')
-    old = np.load(ROOT/'results/harmonics_cajal/surfaces.npz')
-    indices = {cid: i for i, cid in enumerate(old['ids'])}
     _CAJAL_CELLS = [quantized_icdm(cdist(p, p), u, 32) for p in points]
-    _CAJAL_LANDMARKS = [quantized_icdm(cdist(old['points'][indices[cid]], old['points'][indices[cid]]), u, 32) for cid in fit['landmarks']]
+    _CAJAL_LANDMARKS = []
+    if 'profile' in parts:
+        fit = np.load(ROOT/'results/harmonics_cajal/cajal_profile_adjustment.npz')
+        old = np.load(ROOT/'results/harmonics_cajal/surfaces.npz')
+        indices = {cid: i for i, cid in enumerate(old['ids'])}
+        _CAJAL_LANDMARKS = [quantized_icdm(cdist(old['points'][indices[cid]], old['points'][indices[cid]]), u, 32) for cid in fit['landmarks']]
 
 
 def cajal_row(i):
     from cajal.qgw import quantized_gw
     path = _CAJAL_PATH/'qgw_rows'/f'{i:04d}.npz'
-    if not path.exists():
-        values = [quantized_gw(_CAJAL_CELLS[i], _CAJAL_CELLS[j])[1] for j in range(i+1, len(_CAJAL_CELLS))]
-        profile = [quantized_gw(_CAJAL_CELLS[i], p)[1] for p in _CAJAL_LANDMARKS]
-        npz(path, distances=np.asarray(values), profile=np.asarray(profile))
+    cached = dict(np.load(path)) if path.exists() else {}
+    if 'distances' in _CAJAL_PARTS and 'distances' not in cached:
+        cached['distances'] = np.asarray([quantized_gw(_CAJAL_CELLS[i], _CAJAL_CELLS[j])[1] for j in range(i+1, len(_CAJAL_CELLS))])
+    if 'profile' in _CAJAL_PARTS and 'profile' not in cached:
+        cached['profile'] = np.asarray([quantized_gw(_CAJAL_CELLS[i], p)[1] for p in _CAJAL_LANDMARKS])
+    npz(path, **cached)
     return i
 
 
-def cajal_codes(frame):
-    if (OUT/'cajal_codes.npz').exists():
-        return
+def cajal_codes(frame, parts=('distances','profile')):
+    target = OUT/'cajal_codes.npz'
+    cached = dict(np.load(target)) if target.exists() else {}
+    if set(parts).issubset(cached): return
     (OUT/'qgw_rows').mkdir(exist_ok=True)
-    with ProcessPoolExecutor(max_workers=3, initializer=cajal_initialize, initargs=(str(OUT),)) as pool:
+    with ProcessPoolExecutor(max_workers=3, initializer=cajal_initialize, initargs=(str(OUT),parts)) as pool:
         jobs = [pool.submit(cajal_row, i) for i in range(len(frame))]
         for done, job in enumerate(as_completed(jobs), 1):
             job.result()
             if done % 20 == 0:
-                progress('CAJAL rows and original landmarks', done, len(frame))
-    d = np.zeros((len(frame), len(frame)))
+                progress('CAJAL selected distances', done, len(frame))
+    d = np.zeros((len(frame), len(frame))) if 'distances' in parts else None
     profiles = []
     for i in range(len(frame)):
         with np.load(OUT/'qgw_rows'/f'{i:04d}.npz') as a:
-            d[i, i+1:] = a['distances']; profiles.append(a['profile'])
-    d += d.T
-    if not np.isfinite(d).all() or (d < 0).any():
-        raise ValueError('Invalid CAJAL matrix')
-    npz(OUT/'cajal_codes.npz', ids=frame.cell_id.to_numpy(dtype=str), distances=d, profile=np.asarray(profiles))
+            if 'distances' in parts: d[i, i+1:] = a['distances']
+            if 'profile' in parts: profiles.append(a['profile'])
+    if d is not None:
+        d += d.T
+        if not np.isfinite(d).all() or (d < 0).any():
+            raise ValueError('Invalid CAJAL matrix')
+    cached['ids'] = frame.cell_id.to_numpy(dtype=str)
+    if 'distances' in parts: cached['distances'] = d
+    if 'profile' in parts: cached['profile'] = np.asarray(profiles)
+    npz(target, **cached)
 
 
 def publish(frame):

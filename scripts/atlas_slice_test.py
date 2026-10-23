@@ -21,6 +21,9 @@ def read_slice(entry, plane, index):
     import numpy as np
     import tifffile
     from prepare_atlas_dataset import inspect
+    if entry.get('tiffSelection'):
+        from atlas_tiff import read_slice as tiff_slice
+        return tiff_slice(entry,plane,index)
     if entry.get('omeZarr'):
         from atlas_ome_zarr import read_slice as zarr_slice
         if plane not in PLANES:raise ValueError('Choose XY, XZ or YZ.')
@@ -105,15 +108,17 @@ def run(request, output, segment=False, model_factory=None):
         flow_threshold = float(settings.get('flowThreshold', 0.4))
         if not np.isfinite(flow_threshold) or flow_threshold < 0:
             raise ValueError('Flow threshold must be a finite number of 0 or greater.')
-        if settings['model'] not in ('cpsam_v2','cpdino','cpdino-vitb'):
+        from atlas_cellpose_models import MODEL_NAMES, make_model, model_metadata
+        if settings['model'] not in MODEL_NAMES:
             raise ValueError('Unsupported Cellpose model.')
         event('Preparing slice', .15)
         processed = preprocess(image, spacing, dimensions, settings)
         event('Loading Cellpose model', .3)
         if model_factory is None:
-            from cellpose.models import CellposeModel
-            model_factory = CellposeModel
-        model = model_factory(pretrained_model=settings['model'], gpu=bool(settings['gpu']))
+            model_factory = make_model
+        from atlas_cellpose_models import factory_arguments, local_fields
+        settings.update(local_fields(settings,freeze=True))
+        model = model_factory(**factory_arguments(settings))
         event('Segmenting this slice', .5)
         masks, _, _ = model.eval(processed, diameter=float(settings['diameter']), flow_threshold=flow_threshold,
                                  do_3D=False, compute_masks=True)
@@ -131,7 +136,7 @@ def run(request, output, segment=False, model_factory=None):
         rgba[find_boundaries(labels, mode='inner'),3] = 255
         Image.fromarray(rgba).save(output/'labels.png')
         result.update(cells=int(np.count_nonzero(np.unique(masks))), device=str(model.device),
-                      processedShape=list(processed.shape), seconds=time.monotonic()-started)
+                      processedShape=list(processed.shape), seconds=time.monotonic()-started,modelRuntime=model_metadata(settings['model'],settings))
     save(output/'slice.json', result)
     event('Slice test ready' if segment else 'Raw slice ready', 1)
     return result

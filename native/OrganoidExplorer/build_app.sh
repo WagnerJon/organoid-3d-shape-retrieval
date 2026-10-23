@@ -22,7 +22,7 @@ app = Path(sys.argv[1])
 info = dict(CFBundleExecutable='OrganoidExplorer', CFBundleIdentifier='org.local.OrganoidAtlas',
             CFBundleName='Organoid Atlas', CFBundleDisplayName='Organoid Atlas',
             CFBundleIconFile='OrganoidAtlas.icns',
-            CFBundlePackageType='APPL', CFBundleShortVersionString='0.1.5', CFBundleVersion='1',
+            CFBundlePackageType='APPL', CFBundleShortVersionString='0.1.6', CFBundleVersion='1',
             NSLocalNetworkUsageDescription='Find paired Atlas workers and transfer microscopy stacks for processing on your local network.', NSBonjourServices=['_atlas-worker._tcp'], LSMinimumSystemVersion='14.0', NSHighResolutionCapable=True,
             ExplorerProjectPath=str(Path(sys.argv[2]).parent.parent), NSPrincipalClass='NSApplication')
 info['UTImportedTypeDeclarations'] = [dict(UTTypeIdentifier='org.numpy.npy', UTTypeDescription='NumPy array', UTTypeConformsTo=['public.data'], UTTypeTagSpecification={'public.filename-extension':['npy'], 'public.mime-type':['application/x-npy']})]

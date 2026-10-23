@@ -9,21 +9,42 @@ struct Inspector: View {
 private struct InspectorContent: View {
     @ObservedObject var navigation: SliceNavigation
     @EnvironmentObject var store: ExplorerStore
+    @StateObject private var capture = PlotSceneCapture()
+    @StateObject private var cameraLink = CameraLink()
     @State private var meshError: String?
     @State private var showMeasurements = false
     @State private var showLearnedShape = false
+    var reconstructionCaption: String {
+        if let meshError { return meshError }
+        if !store.reconstructionColors.feature.isEmpty { return "Colored by " + plotFeatureName(store.reconstructionColors.feature) }
+        var parts = ["Random color per cell ID"]
+        if store.reconstructionHighlight, let selected = store.selected, selected.label > 0, selected.includedInAnalysis { parts.append("orange = selected") }
+        parts.append(store.hideExcluded ? "excluded cells hidden" : "red = excluded")
+        return parts.joined(separator: " · ")
+    }
     var body: some View {
         ScrollView {
         VStack(alignment: .leading, spacing: 10) {
-            HStack { Text("Reconstruction").font(.headline); Spacer(); Text(store.sample?.id ?? "—").monospaced().foregroundStyle(.secondary) }
+            HStack {
+                Text("Reconstruction").font(.headline); Spacer()
+                Text(store.sample?.id ?? "—").monospaced().foregroundStyle(.secondary).lineLimit(1)
+                PlotRenderButton(title: store.sample?.displayName ?? "Reconstruction", xLabel: "X (µm)", yLabel: "Y (µm)", zLabel: "Z (µm)",
+                                 aspectRatio: capture.aspectRatio, threeD: true) { options, size in
+                    try capture.snapshot(options: options, size: size)
+                }.disabled(store.sample == nil || capture.loading)
+                Button { ReconstructionWindows.shared.open(store: store, seed: capture.seed(), link: cameraLink) } label: {
+                    Image(systemName: "arrow.up.left.and.arrow.down.right")
+                }.help("Open reconstruction in full screen").accessibilityLabel("Full screen reconstruction").disabled(store.sample == nil)
+            }
             if let folder = store.folder, let sample = store.sample {
                 ZStack(alignment: .bottomLeading) {
                     ReconstructionView(folder: folder, sample: sample, cells: store.dataset!.cells.filter { $0.sample == sample.id }, selectedLabel: store.selected?.label ?? 0,
                                        isolate: store.isolate, hideExcluded: store.hideExcluded, clipping: store.clip, axis: store.axis, slice: store.slice, reset: store.cameraReset,
+                                       link: cameraLink, coloring: store.reconstructionColors, highlightSelection: store.reconstructionHighlight, capture: capture,
                                        pick: { label in if store.level == "Cells" { store.select("\(sample.id):L\(label)") } },
                                        onError: { meshError = $0 })
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(meshError ?? (store.selected?.label ?? 0 > 0 ? (store.hideExcluded ? "Orange · selected cell · excluded cells hidden" : "Orange · selected cell · red = excluded") : (store.hideExcluded ? "Excluded cells hidden" : "Red · excluded from analyses")))
+                        Text(reconstructionCaption)
                         Text("Drag to orbit · scroll to zoom · click to select")
                     }.font(.caption2).foregroundStyle(.white.opacity(0.8)).padding(12).allowsHitTesting(false)
                 }.frame(height: 250).clipShape(RoundedRectangle(cornerRadius: 10))

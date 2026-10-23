@@ -17,6 +17,8 @@ elif [[ "${1:-}" == "--ome-zarr" ]]; then
     CHECK_ENTRY="$PACKAGE_DIR/Checks/OMEZarrWorker.swift"
 elif [[ "${1:-}" == "--prepare" ]]; then
     CHECK_ENTRY="$PACKAGE_DIR/Checks/PreparationWorker.swift"
+elif [[ "${1:-}" == "--reconstruction" ]]; then
+    CHECK_ENTRY="$PACKAGE_DIR/Checks/ReconstructionWorker.swift"
 elif [[ "${1:-}" == "--plot-colors" ]]; then
     CHECK_ENTRY="$PACKAGE_DIR/Checks/PlotColorWorker.swift"
 elif [[ "${1:-}" == "--plot-rendering" ]]; then
@@ -40,6 +42,8 @@ swiftc -O -whole-module-optimization "${COMPILER_FLAGS[@]}" \
     "$PACKAGE_DIR/Sources/OrganoidExplorer/MissingMethods.swift" \
     "$PACKAGE_DIR/Sources/OrganoidExplorer/PointCloud.swift" \
     "$PACKAGE_DIR/Sources/OrganoidExplorer/SceneViewer.swift" \
+    "$PACKAGE_DIR/Sources/OrganoidExplorer/SceneCapture.swift" \
+    "$PACKAGE_DIR/Sources/OrganoidExplorer/ExpandedReconstruction.swift" \
     "$PACKAGE_DIR/Sources/OrganoidExplorer/PlotCellSurfaces.swift" \
     "$PACKAGE_DIR/Sources/OrganoidExplorer/PansegSettings.swift" \
     "$PACKAGE_DIR/Sources/OrganoidExplorer/FocusSettings.swift" \

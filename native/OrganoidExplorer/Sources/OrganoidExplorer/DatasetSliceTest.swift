@@ -45,13 +45,13 @@ struct DatasetSliceTestView: View {
     var count: Int { input?.shape[axis] ?? 1 }
     var index: Int { min(max(0, Int(slice.rounded())), max(0, count-1)) }
     var canPreview: Bool { input?.spacing.allSatisfy { $0.isFinite && $0 > 0 } == true }
-    var canTest: Bool { canPreview && preparation.settings.scale.isFinite && (0.05...1).contains(preparation.settings.scale) && preparation.settings.diameter.isFinite && (2...500).contains(preparation.settings.diameter) && preparation.settings.flowThreshold.isFinite && preparation.settings.flowThreshold >= 0 }
+    var canTest: Bool { preparation.settings.validModel && canPreview && preparation.settings.scale.isFinite && (0.05...1).contains(preparation.settings.scale) && preparation.settings.diameter.isFinite && (2...500).contains(preparation.settings.diameter) && preparation.settings.flowThreshold.isFinite && preparation.settings.flowThreshold >= 0 }
     var stale: Bool {
         guard let result = preparation.sliceResult, result.cells != nil else { return false }
         return result.settings != preparation.settings || result.spacing != input?.spacing
     }
     var body: some View {
-        GroupBox("Try settings on one slice") {
+        GroupBox(preparation.usesFocus ? "Inspect the raw stack" : "Try settings on one slice") {
             VStack(alignment: .leading, spacing: 8) {
                 if preparation.inputs.isEmpty {
                     Text("Add a TIFF, NumPy or OME-Zarr volume above to test segmentation before preparing the dataset.").font(.caption).foregroundStyle(.secondary)
@@ -71,13 +71,16 @@ struct DatasetSliceTestView: View {
                     }
                     HStack {
                         Button("Load raw slice") { if let input { preparation.previewSlice(input: input, plane: plane, index: index, segment: false) } }.disabled(!canPreview)
-                        Button("Test segmentation on this slice") { if let input { preparation.previewSlice(input: input, plane: plane, index: index, segment: true) } }.disabled(!canTest)
+                        if !preparation.usesFocus {
+                            Button("Test segmentation on this slice") { if let input { preparation.previewSlice(input: input, plane: plane, index: index, segment: true) } }.disabled(!canTest)
+                        }
                         Spacer()
                         if preparation.sliceLabels != nil {
                             Toggle("Overlay", isOn: $overlay)
                             Slider(value: $opacity, in: 0...1).frame(width: 90).accessibilityLabel("Cell label opacity")
                         }
                     }
+                    if !preparation.usesFocus {
                     HStack {
                         Toggle("Show diameter guide", isOn: $showDiameter).toggleStyle(.checkbox)
                         Text("Purple disc · \(preparation.settings.diameter, specifier: "%.1f") processed px at the current scale")
@@ -92,13 +95,14 @@ struct DatasetSliceTestView: View {
                     if !preparation.settings.flowThreshold.isFinite || preparation.settings.flowThreshold < 0 {
                         Text("Flow threshold must be a finite number of 0 or greater.").font(.caption).foregroundStyle(.orange)
                     }
+                    }
                     if !canPreview { Text("Enter valid voxel spacing above before loading a slice.").font(.caption).foregroundStyle(.orange) }
                     if let raw = preparation.sliceRaw {
                         HStack(spacing: 10) {
                             preview(title: "Raw microscopy", raw: raw, labels: nil)
                             if preparation.sliceLabels != nil {
                                 preview(title: "Cellpose · selected slice", raw: raw, labels: overlay ? preparation.sliceLabels : nil)
-                            } else {
+                            } else if !preparation.usesFocus {
                                 VStack(alignment: .leading, spacing: 4) {
                                     Text("Cellpose · selected slice").font(.caption.bold())
                                     Text("Run the slice test to see detected cells here.").font(.caption).foregroundStyle(.secondary)
@@ -112,9 +116,9 @@ struct DatasetSliceTestView: View {
                             .font(.caption).foregroundStyle(.secondary)
                         if stale { Text("Settings or calibration changed. Run the slice test again to see their effect.").font(.caption).foregroundStyle(.orange) }
                     }
-                    Text("Uses the settings above. This is a 2D Cellpose test with slice-local preprocessing; full-volume preprocessing and u-Segment3D linking can produce different results. The test does not create or change a dataset.")
+                    Text(preparation.usesFocus ? "FOCUS-3D requires a full 3D stack. Inspect raw slices here, then prepare the dataset with the selected FOCUS-3D settings." : "Uses the settings above. This is a 2D Cellpose test with slice-local preprocessing; full-volume preprocessing and u-Segment3D linking can produce different results. The test does not create or change a dataset.")
                         .font(.caption).foregroundStyle(.secondary)
-                    if preparation.settings.native3D { Text("Native 3D settings apply when preparing the complete stack. This single-slice test remains 2D and cannot preview 3D mask formation.").font(.caption).foregroundStyle(.orange) }
+                    if !preparation.usesFocus && preparation.settings.native3D { Text("Native 3D settings apply when preparing the complete stack. This single-slice test remains 2D and cannot preview 3D mask formation.").font(.caption).foregroundStyle(.orange) }
                 }
             }.padding(6)
         }
@@ -138,7 +142,7 @@ struct DatasetSliceTestView: View {
                 Color.black
                 Image(nsImage: raw).resizable().interpolation(.high).scaledToFit()
                 if let labels { Image(nsImage: labels).resizable().interpolation(.none).scaledToFit().opacity(opacity) }
-                if showDiameter, let result = preparation.sliceResult {
+                if showDiameter && !preparation.usesFocus, let result = preparation.sliceResult {
                     GeometryReader { geometry in
                         let rect = PreparationDiameterGuide.imageRect(image: raw.size, canvas: geometry.size)
                         if let diameter = PreparationDiameterGuide.displayDiameter(result: result, imageRect: rect, scale: preparation.settings.scale, diameter: preparation.settings.diameter) {

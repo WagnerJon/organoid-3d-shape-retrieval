@@ -227,7 +227,7 @@ def prepare_workspace(folder, data, groups):
     return work
 
 
-def stage(work, group, device):
+def stage(work, group, device, keys=None):
     import numpy as np
     import pandas as pd
     import infer_joint_organoid_methods as engine
@@ -237,6 +237,7 @@ def stage(work, group, device):
     work = Path(work)
     engine.JOINT, engine.ATLAS, engine.OUT, engine.DEVICE = work, work / 'atlas_dataset', work / 'representations', device
     frame = pd.read_csv(engine.OUT / 'manifest.csv')
+    keys = families()[group] if keys is None else keys
     if group in ('lite', 'point-mae', 'allen'):
         (engine.OUT / 'geometry').mkdir(exist_ok=True)
         (engine.OUT / 'allen').mkdir(exist_ok=True)
@@ -254,20 +255,45 @@ def stage(work, group, device):
             engine.npz(path, points=points, axes=axes, gap=gap, center=center, scale=scale, source_hash=row['source_mesh_sha256'])
             engine.progress('Preparing surfaces', index + 1, len(frame))
     if group == 'spatial':
-        from encode_standalone_atlas import main
-        main(engine.ATLAS)
+        if all(key.startswith('morph_') for key in keys):
+            # Classical feature subsets do not need any surface/SDF inference.
+            engine.npz(engine.OUT / 'morphology_codes.npz', ids=frame.cell_id.to_numpy(dtype=str),
+                       **morphology_values(frame, keys))
+        else:
+            from encode_standalone_atlas import main
+            main(engine.ATLAS, only=keys)
     elif group == 'harmonics':
         engine.harmonic_codes(frame)
     elif group == 'cajal':
         engine.harmonic_codes(frame)
-        engine.cajal_codes(frame)
+        engine.cajal_codes(frame, parts=[part for key,part in [('cajal_qgw','distances'),('cajal_profile_adjusted','profile')] if key in keys])
     elif group == 'pointnet':
         engine.pointnet(frame)
     elif group == 'image':
         engine.image_inputs(frame, json.loads((work / 'sources.json').read_text())['images'])
-        engine.image_codes(frame)
+        engine.image_codes(frame, keys=keys)
     else:
-        engine.learned(frame, group)
+        engine.learned(frame, group, keys=keys)
+
+
+def morphology_values(frame, keys):
+    import numpy as np
+    import pandas as pd
+    from spatial_benchmark_core import CLASSICAL, CONTROLS, morphology
+    from encode_standalone_atlas import residual, residual_fit
+    original = pd.read_csv(ROOT / 'results/pointnet_shape/data/manifest.csv')
+    development = pd.read_csv(ROOT / 'results/spatial_benchmark/dev_manifest.csv')
+    train = original.set_index('cell_id').loc[sorted(development.loc[development.split == 'train', 'cell_id'])]
+    columns = dict(morph_controls=CONTROLS,
+                   morph_size=['volume_um3', 'surface_area_um2', 'major_axis_um', 'middle_axis_um', 'minor_axis_um'],
+                   morph_shape=['sphericity', 'elongation', 'flatness', 'mesh_solidity'],
+                   morph_all=CLASSICAL, morph_adjusted=CLASSICAL)
+    result = {}
+    for key in keys:
+        reference = morphology(train, columns[key]);mean=reference.mean(0);std=reference.std(0).clip(1e-6)
+        values = (morphology(frame, columns[key])-mean)/std
+        result[key] = residual(frame, values, residual_fit(train,(reference-mean)/std)) if key == 'morph_adjusted' else values
+    return result
 
 
 def values_for(work, group, keys):
@@ -283,16 +309,23 @@ def values_for(work, group, keys):
             return {k: a[k].copy() for k in a.files}
     result, reconstructions = {}, None
     if group == 'spatial':
-        staged = json.loads((work / 'atlas_dataset/dataset.json').read_text())
-        for key in keys:
-            result[key] = np.array([c['representations'][key]['vector'] for c in staged['cells']])
+        if all(key.startswith('morph_') for key in keys):
+            result = {key: load('morphology_codes.npz')[key] for key in keys}
+        else:
+            staged = json.loads((work / 'atlas_dataset/dataset.json').read_text())
+            for key in keys:
+                result[key] = np.array([c['representations'][key]['vector'] for c in staged['cells']])
     elif group == 'harmonics':
         raw = load('surfaces.npz')['harmonics']
-        result = dict(spherical_harmonics=raw, spherical_harmonics_adjusted=residual(frame, raw, np.load(ROOT / 'results/harmonics_cajal/harmonics_adjustment.npz')))
+        result = dict(spherical_harmonics=raw)
+        if 'spherical_harmonics_adjusted' in keys:
+            result['spherical_harmonics_adjusted'] = residual(frame, raw, np.load(ROOT / 'results/harmonics_cajal/harmonics_adjustment.npz'))
     elif group == 'cajal':
         a = load('cajal_codes.npz')
-        result = dict(cajal_qgw=np.c_[np.arange(len(frame)), a['distances']],
-                      cajal_profile_adjusted=residual(frame, a['profile'], np.load(ROOT / 'results/harmonics_cajal/cajal_profile_adjustment.npz')))
+        if 'cajal_qgw' in keys:
+            result['cajal_qgw'] = np.c_[np.arange(len(frame)), a['distances']]
+        if 'cajal_profile_adjusted' in keys:
+            result['cajal_profile_adjusted'] = residual(frame, a['profile'], np.load(ROOT / 'results/harmonics_cajal/cajal_profile_adjustment.npz'))
     elif group == 'pointnet':
         a = load('pointnet_codes.npz')
         result['pointnet_shape128'], reconstructions = a['codes'], a['paths']
@@ -302,20 +335,30 @@ def values_for(work, group, keys):
         arms = {}
         if group == 'lite':
             for kind in ('invariant', 'cnn'):
-                arms[f'shapeembed3d_{kind}'] = (load(f'lite_{kind}.npz')['mean'], ROOT / f'results/shapeembed3d/{kind}_fit.npz')
+                base = f'shapeembed3d_{kind}'
+                if any(key.startswith(base+'_') for key in keys):
+                    arms[base] = (load(f'lite_{kind}.npz')['mean'], ROOT / f'results/shapeembed3d/{kind}_fit.npz')
         elif group == 'allen':
             a = load('allen_codes.npz')
             for kind in ('pretrained', 'head_decoder'):
-                arms[f'allen_{kind}'] = (a[kind], ROOT / f'results/allen_reference/evaluation/{kind}_readout_fit.npz')
+                base = f'allen_{kind}'
+                if any(key.startswith(base+'_') for key in keys):
+                    arms[base] = (a[kind], ROOT / f'results/allen_reference/evaluation/{kind}_readout_fit.npz')
         else:
             for arm in ('pretrained', 'adapted'):
+                if not any(key.startswith(f'point_mae_{arm}_') for key in keys):
+                    continue
                 a = load(f'point_mae_{arm}.npz')
                 for kind in ('native', 'pose_average'):
-                    arms[f'point_mae_{arm}_{kind}'] = (a[kind], ROOT / f'results/point_mae/{arm}_{kind}_fit.npz')
+                    base = f'point_mae_{arm}_{kind}'
+                    if any(key.startswith(base+'_') for key in keys):
+                        arms[base] = (a[kind], ROOT / f'results/point_mae/{arm}_{kind}_fit.npz')
         for base, (raw, path) in arms.items():
-            fit = dict(np.load(path))
-            result[base + '_raw'] = raw
-            result[base + '_adjusted'] = residual(frame, (raw - fit['center']) / fit['scale'], fit)
+            if base + '_raw' in keys:
+                result[base + '_raw'] = raw
+            if base + '_adjusted' in keys:
+                fit = dict(np.load(path))
+                result[base + '_adjusted'] = residual(frame, (raw - fit['center']) / fit['scale'], fit)
     return {key: result[key] for key in keys}, reconstructions
 
 
@@ -392,12 +435,27 @@ def publish(folder, work, group, keys, expected):
     return digest(path)
 
 
-def run(folder, output, only=None, device='auto'):
+def selected_groups(plan, only=None, method_ids=None):
+    known = {key for keys in families().values() for key in keys}
+    if method_ids is not None and set(method_ids)-known:
+        raise ValueError('Unknown methods: ' + ', '.join(sorted(set(method_ids)-known)))
+    result = []
+    for group in plan['groups']:
+        if not group['available'] or (only is not None and group['id'] not in only):
+            continue
+        pairs = [(key,name) for key,name in zip(group['methods'],group['names'])
+                 if method_ids is None or key in method_ids]
+        if pairs:
+            result.append(dict(group, methods=[p[0] for p in pairs], names=[p[1] for p in pairs]))
+    return result
+
+
+def run(folder, output, only=None, device='auto', method_ids=None):
     folder = Path(folder).resolve()
     output = Path(output)
     plan = inspect(folder)
-    groups = [g for g in plan['groups'] if g['available'] and (not only or g['id'] in only)]
-    result = dict(plan, completed=[], failed=[], status='complete')
+    groups = selected_groups(plan, only, method_ids)
+    result = dict(plan, selected=[key for g in groups for key in g['methods']], completed=[], failed=[], status='complete')
     save(output, dict(result, status='running'))
     if not groups:
         save(output, result)
@@ -437,8 +495,11 @@ def run(folder, output, only=None, device='auto'):
                 python = ROOT / '.cache/cajal-env/bin/python' if group['id'] == 'cajal' else Path(sys.executable)
                 log_path = work / f"{group['id']}.log"
                 with log_path.open('w') as log:
-                    current = subprocess.Popen([str(python), '-u', str(Path(__file__).resolve()), 'stage',
-                                                '--dataset', str(work), '--group', group['id'], '--device', device],
+                    command = [str(python), '-u', str(Path(__file__).resolve()), 'stage',
+                               '--dataset', str(work), '--group', group['id'], '--device', device]
+                    for key in group['methods']:
+                        command.extend(['--method', key])
+                    current = subprocess.Popen(command,
                                                cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, start_new_session=True)
                     for line in current.stdout:
                         log.write(line); log.flush()
@@ -473,14 +534,18 @@ def main():
     parser.add_argument('--dataset', required=True, type=Path)
     parser.add_argument('--output', type=Path)
     parser.add_argument('--group', choices=list(families()))
+    parser.add_argument('--method', action='append', choices=[k for v in families().values() for k in v],
+                        help='Compute/publish only this method; repeat to select several. Omit for all missing methods.')
     parser.add_argument('--device', choices=['auto', 'cpu', 'mps'], default='auto')
     args = parser.parse_args()
     if args.operation == 'stage':
-        stage(args.dataset, args.group, args.device)
+        if args.method and not set(args.method).issubset(families()[args.group]):
+            parser.error('Stage methods must belong to the selected group')
+        stage(args.dataset, args.group, args.device, args.method)
     elif args.operation == 'inspect':
         save(args.output, inspect(args.dataset))
     else:
-        run(args.dataset, args.output, [args.group] if args.group else None, args.device)
+        run(args.dataset, args.output, [args.group] if args.group else None, args.device, args.method)
 
 
 if __name__ == '__main__':

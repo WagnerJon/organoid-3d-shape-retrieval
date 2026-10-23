@@ -172,18 +172,22 @@ def run(source, method, settings, folder, reuse=None, purpose=None, comparison_s
     if method == 'cellpose':
         from reconstruct import predict
         model = settings.get('model', 'cpsam_v2')
-        if model not in ('cpsam_v2', 'cpdino', 'cpdino-vitb'):
-            raise ValueError('Cellpose model must be cpsam_v2, cpdino or cpdino-vitb.')
+        from atlas_cellpose_models import MODEL_NAMES, model_metadata, weights_path, local_fields
+        if model not in MODEL_NAMES:
+            raise ValueError('Cellpose model must be one of '+', '.join(MODEL_NAMES)+'.')
         settings['model'] = model
+        settings.update(local_fields(settings,freeze=True))
         config = dict(spacing_zyx_um=source['spacing'], scale=float(settings['scale']), model=model,
                       diameter=float(settings['diameter']), gpu=bool(settings['gpu']), background_correction=bool(settings['background']), gradient_decay=.05)
         from atlas_cellpose_3d import settings as native_settings
         config.update(native_settings(settings))
+        config.update(local_fields(settings))
         if not 0.05 <= config['scale'] <= 1 or not 2 <= config['diameter'] <= 500:
             raise ValueError('Cellpose scale must be 0.05–1 and diameter 2–500 processed pixels.')
         _, labels, _ = predict(Path(source['path']), config, folder, progress=progress)
-        weights = Path(os.environ.get('CELLPOSE_LOCAL_MODELS_PATH', str(ROOT / '.cache/cellpose'))) / model
+        weights = weights_path(model,settings)
         if weights.is_file(): settings['checkpointSHA256'] = fingerprint(weights)
+        settings['modelRuntime'] = model_metadata(model,settings)
         provenance = f'Cellpose {model}, '+('native do_3D=True; MPS prediction with CPU 3D masks when using Apple GPU' if config['segmentationMode']=='cellpose3d' else 'XY/XZ/YZ inference + u-Segment3D aggregation')+'. Image only; no reference masks.'
     elif method == 'panseg':
         from panseg_explorer import run_panseg

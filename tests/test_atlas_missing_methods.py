@@ -5,7 +5,7 @@ import struct
 import sys
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 
 import numpy as np
 import trimesh
@@ -103,6 +103,96 @@ class MissingMethodsTests(unittest.TestCase):
         second = methods.prepare_workspace(self.folder, self.data, ['harmonics'])
         self.assertEqual(first, second)
         self.assertEqual(marker.read_text(), 'retained intermediate result')
+
+    def test_selected_classical_methods_skip_surface_encoders(self):
+        chosen = ['morph_size', 'morph_shape']
+        result = methods.run(self.folder, self.folder / 'report.json', device='cpu', method_ids=chosen)
+        self.assertFalse(result['failed'])
+        self.assertEqual(result['completed'], chosen)
+        updated = json.loads((self.folder / 'dataset.json').read_text())
+        self.assertEqual({m['id'] for m in updated['methods']}, {'traditional', *chosen})
+        work = self.folder / updated['methodCompletion'][0]['cache']
+        self.assertTrue((work / 'representations/morphology_codes.npz').exists())
+        self.assertFalse((work / 'atlas_dataset/shape_representations').exists())
+        for cell in updated['cells']:
+            self.assertEqual(set(cell['representations']), {'traditional', *chosen})
+
+    def test_selected_harmonic_variant_and_later_sibling_resume(self):
+        raw, adjusted = 'spherical_harmonics', 'spherical_harmonics_adjusted'
+        first = methods.run(self.folder, self.folder / 'report.json', device='cpu', method_ids=[raw])
+        self.assertEqual(first['completed'], [raw])
+        updated = json.loads((self.folder / 'dataset.json').read_text())
+        self.assertTrue(all(adjusted not in c['representations'] for c in updated['cells']))
+        work = self.folder / updated['methodCompletion'][0]['cache']
+        cached = work / 'representations/surfaces.npz'
+        stamp = cached.stat().st_mtime_ns
+        second = methods.run(self.folder, self.folder / 'again.json', device='cpu', method_ids=[adjusted])
+        self.assertEqual(second['completed'], [adjusted])
+        self.assertEqual(cached.stat().st_mtime_ns, stamp)
+        self.assertEqual(json.loads((self.folder / 'dataset.json').read_text())['methodCompletion'][-1]['cache'], str(work.relative_to(self.folder)))
+
+    def test_empty_or_invalid_selection_cannot_start_all_methods(self):
+        before = (self.folder / 'dataset.json').read_bytes()
+        with patch.object(methods, 'prepare_workspace', side_effect=AssertionError('No work expected')):
+            result = methods.run(self.folder, self.folder / 'empty.json', method_ids=[])
+            self.assertEqual(result['completed'], [])
+            with self.assertRaisesRegex(ValueError, 'Unknown methods'):
+                methods.run(self.folder, self.folder / 'invalid.json', method_ids=['not-a-method'])
+        self.assertEqual(before, (self.folder / 'dataset.json').read_bytes())
+
+    def test_selected_learned_methods_only_dispatch_chosen_models_and_views(self):
+        import infer_joint_organoid_methods as engine
+        import extend_atlas_shapes as extension
+        frame = __import__('pandas').DataFrame()
+        with patch.object(engine, 'DEVICE', 'cpu'), patch.object(engine, 'OUT', self.folder, create=True), patch.object(extension, 'OUT', self.folder), patch.object(extension, 'point_mae') as calculate:
+            engine.learned(frame, 'point-mae', keys=['point_mae_pretrained_native_raw'])
+            self.assertEqual(calculate.call_args.kwargs, {'arms':['pretrained'], 'kinds':{'pretrained':['native']}})
+        with patch.object(engine, 'DEVICE', 'cpu'), patch.object(engine, 'OUT', self.folder, create=True), patch.object(extension, 'OUT', self.folder), patch.object(extension, 'lite') as calculate:
+            engine.learned(frame, 'lite', keys=['shapeembed3d_cnn_raw'])
+            self.assertEqual(calculate.call_args.kwargs, {'kinds':['cnn']})
+
+    def test_point_mae_selected_view_cache_can_be_extended(self):
+        import torch
+        import pandas as pd
+        import extend_atlas_shapes as extension
+        import point_mae_reference
+        import run_point_mae_reference
+        frame = pd.DataFrame([dict(cell_id='test:1', original_index=0, inference_index=123)])
+        model = MagicMock(); model.to.return_value = model; model.eval.return_value = model
+        with patch.object(extension, 'OUT', self.folder), patch.object(extension, 'status'), \
+             patch.object(extension, 'geometry', return_value=(np.zeros((32,3)), np.eye(3))), \
+             patch.object(point_mae_reference, 'model', return_value=model), \
+             patch.object(point_mae_reference, 'encode', return_value=torch.ones((1,4))) as encode, \
+             patch.object(run_point_mae_reference, 'draw', side_effect=lambda pool, index: pool):
+            extension.point_mae(frame, 'cpu', arms=['pretrained'], kinds={'pretrained':['native']})
+            self.assertEqual(encode.call_count, 1)
+            path = self.folder / 'point_mae_pretrained.npz'
+            with np.load(path) as codes:
+                self.assertEqual(set(codes.files), {'ids','native'})
+                original = codes['native'].copy()
+            extension.point_mae(frame, 'cpu', arms=['pretrained'], kinds={'pretrained':['pose_average']})
+            self.assertEqual(encode.call_count, 5)
+            with np.load(path) as codes:
+                self.assertEqual(set(codes.files), {'ids','native','pose_average'})
+                np.testing.assert_array_equal(codes['native'], original)
+            self.assertFalse((self.folder / 'point_mae_adapted.npz').exists())
+
+    def test_cajal_profile_selection_skips_pairwise_rows_and_extends_cache(self):
+        import types
+        import infer_joint_organoid_methods as engine
+        module = types.ModuleType('cajal.qgw')
+        module.quantized_gw = MagicMock(return_value=(None,.25))
+        (self.folder / 'qgw_rows').mkdir()
+        with patch.dict(sys.modules, {'cajal': types.ModuleType('cajal'), 'cajal.qgw': module}), \
+             patch.object(engine, '_CAJAL_PATH', self.folder), patch.object(engine, '_CAJAL_CELLS', [1,2,3]), \
+             patch.object(engine, '_CAJAL_LANDMARKS', [4,5]), patch.object(engine, '_CAJAL_PARTS', ['profile']):
+            engine.cajal_row(0)
+            self.assertEqual(module.quantized_gw.call_count, 2)
+            path = self.folder / 'qgw_rows/0000.npz'
+            with np.load(path) as codes:self.assertEqual(set(codes.files), {'profile'})
+            with patch.object(engine, '_CAJAL_PARTS', ['distances']):engine.cajal_row(0)
+            self.assertEqual(module.quantized_gw.call_count, 4)
+            with np.load(path) as codes:self.assertEqual(set(codes.files), {'profile','distances'})
 
 
 if __name__ == '__main__':

@@ -125,26 +125,33 @@ struct PlotColorControls: View {
     let features: [String]
     let map: PlotColorMap
     var scope: PlotColorScope = .thisPlot
+    var emptyFeatureLabel = "Groups (comparison setting)"
+    var showGroupPalette = true
+    var helpOverride: String? = nil
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Picker("Color by", selection: Binding(get: { settings.feature }, set: { feature in
                 settings.feature = feature
                 if !feature.isEmpty && settings.palette == .atlas { settings.palette = .viridis }
             })) {
-                Text("Groups (comparison setting)").tag("")
+                Text(emptyFeatureLabel).tag("")
                 ForEach(features, id: \.self) { Text(plotFeatureName($0)).tag($0) }
                 if !settings.feature.isEmpty && !features.contains(settings.feature) { Text(plotFeatureName(settings.feature) + " · unavailable").tag(settings.feature) }
             }.accessibilityLabel(scope == .allMethods ? "Color all method plots by a feature" : "Color this plot by a feature")
+            if showGroupPalette || !settings.feature.isEmpty {
             Picker("Palette", selection: $settings.palette) {
                 ForEach(PlotPalette.allCases.filter { settings.feature.isEmpty || $0 != .atlas }) { Text($0.rawValue).tag($0) }
             }.accessibilityLabel(scope == .allMethods ? "Color palette for all method plots" : "Color palette for this plot")
-            if settings.feature.isEmpty {
+            }
+            if settings.feature.isEmpty && showGroupPalette {
                 HStack(spacing: 5) {
                     ForEach(0..<6) { group in
                         Circle().fill(Color(settings.palette.groupColor(group))).frame(width: 6, height: 6)
                         Text("\(group+1)")
                     }
                 }.font(.caption2).foregroundStyle(.secondary)
+            } else if settings.feature.isEmpty {
+                Text(emptyFeatureLabel).font(.caption2).foregroundStyle(.secondary)
             } else if let lo = map.minimum, let hi = map.maximum {
                 VStack(spacing: 2) {
                     if hi == lo {
@@ -161,6 +168,6 @@ struct PlotColorControls: View {
                 if map.missing > 0 { Text("Gray: missing value").font(.caption2).foregroundStyle(.secondary) }
             } else { Text("No values available · gray points").font(.caption2).foregroundStyle(.secondary) }
         }.controlSize(.small).font(.caption)
-        .help(scope.help)
+        .help(helpOverride ?? scope.help)
     }
 }

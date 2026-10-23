@@ -55,7 +55,7 @@ def compute_slot():
 
 def engine():
     from importlib.metadata import version,PackageNotFoundError
-    files=['run_standalone_cellpose.py','qc_standalone_cellpose.py','prepare_atlas_dataset.py','atlas_worker.py','atlas_inference_batches.py','atlas_preprocessing.py','atlas_ome_zarr.py','atlas_numpy.py','atlas_calibration.py','atlas_cellpose_3d.py','atlas_streamed_linking.py','atlas_streaming_core.py']
+    files=['run_standalone_cellpose.py','qc_standalone_cellpose.py','prepare_atlas_dataset.py','atlas_worker.py','atlas_inference_batches.py','atlas_preprocessing.py','atlas_ome_zarr.py','atlas_numpy.py','atlas_tiff.py','atlas_calibration.py','atlas_cellpose_3d.py','atlas_streamed_linking.py','atlas_streaming_core.py','atlas_cellpose_models.py']
     h=hashlib.sha256()
     for name in files:h.update((name+sha(ROOT/'scripts'/name)).encode())
     for path in sorted((ROOT/'vendor/u-segment3D/segment3D').rglob('*.py')):
@@ -125,7 +125,12 @@ class WorkerState:
         if payload.get('compatibility')!=self.compatibility:raise ValueError('Atlas and worker processing versions differ. Update the worker package.')
         spec=payload['spec'];raw=spec['rawHash'];labels=spec.get('labelHash')
         if not HEX.fullmatch(raw) or (labels and not HEX.fullmatch(labels)):raise ValueError('Invalid input identity')
-        for value in [raw]+([labels] if labels else []):
+        model_hash=spec.get('modelHash')
+        if spec.get('settings',{}).get('model')=='local':
+            if not isinstance(model_hash,str) or not HEX.fullmatch(model_hash):raise ValueError('Upload the local Cellpose checkpoint first')
+            if spec['settings'].get('localModelSHA256')!=model_hash:raise ValueError('Local model checkpoint identity mismatch')
+        elif model_hash:raise ValueError('Unexpected local model checkpoint')
+        for value in [raw]+([labels] if labels else [])+([model_hash] if model_hash else []):
             path=self.folder/'blobs'/value
             if owner not in self.blob_owners.get(value,[]) or not path.is_file() or sha(path)!=value:raise ValueError('Upload the verified input files first.')
         if spec.get('kind','stack') not in ('stack','inference-batch'):raise ValueError('Unsupported job kind')
@@ -136,7 +141,10 @@ class WorkerState:
         if spec.get('kind')=='inference-batch' and native['segmentationMode']=='cellpose3d':raise ValueError('Native Cellpose 3D requires a complete stack, not plane batches.')
         from math import isfinite
         if len(spacing)!=3 or not all(isinstance(x,(int,float)) and isfinite(x) and x>0 for x in spacing):raise ValueError('Invalid spacing')
-        if settings.get('model') not in ('cpsam_v2','cpdino','cpdino-vitb') or not .05<=float(settings['scale'])<=1 or not 2<=float(settings['diameter'])<=500:raise ValueError('Invalid segmentation settings')
+        from atlas_cellpose_models import MODEL_NAMES, local_fields
+        if settings.get('model')=='local':
+            local_fields(dict(settings,localModelPath=str(self.folder/'blobs'/model_hash)))
+        if settings.get('model') not in MODEL_NAMES or not .05<=float(settings['scale'])<=1 or not 2<=float(settings['diameter'])<=500:raise ValueError('Invalid segmentation settings')
         if type(settings.get('gpu')) is not bool or type(settings.get('background')) is not bool:raise ValueError('Invalid device/background settings')
         from atlas_streamed_linking import validate_mode
         validate_mode(settings.get('linkingMode'))
@@ -296,13 +304,18 @@ def run_job(state,job_id):
     from prepare_atlas_dataset import inspect,prepare_stack
     folder=state/'jobs'/job_id;request=json.loads((folder/'request.json').read_text());spec=request['spec']
     raw=state/'blobs'/spec['rawHash']
+    settings=dict(spec['settings'])
+    if settings.get('model')=='local':
+        from atlas_cellpose_models import local_fields
+        settings['localModelPath']=str((state/'blobs'/spec['modelHash']).resolve())
+        settings.update(local_fields(settings,freeze=True))
     if spec.get('kind')=='inference-batch':
         from atlas_inference_batches import infer
-        return infer(raw,spec['settings'],folder/'run')
+        return infer(raw,settings,folder/'run')
     entry=inspect(raw);entry.update(spacing=spec['spacing'])
     if spec.get('labelHash'):
         label=state/'blobs'/spec['labelHash'];s=label.stat();entry.update(labels=str(label),labelStat=[s.st_size,s.st_mtime_ns])
-    prepare_stack(entry,spec['settings'],folder/'run',folder,lambda line:None,export_atlas=False)
+    prepare_stack(entry,settings,folder/'run',folder,lambda line:None,export_atlas=False)
 
 
 def main():

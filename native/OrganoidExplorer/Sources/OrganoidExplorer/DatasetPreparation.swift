@@ -24,8 +24,10 @@ struct PreparationInput: Codable, Identifiable {
     var labels: String? = nil
     var labelStat: [Int64]? = nil
     var omeZarr: OMEZarrSelection? = nil
+    var tiffSelection: TIFFSelection? = nil
     var hasProvidedLabels: Bool { labels != nil || omeZarr?.label != nil }
     var id: String {
+        if let t = tiffSelection { return path + "|series=\(t.series)|t=\(t.time)|c=\(t.channel)" }
         guard let z = omeZarr else { return path }
         return path + "|t=\(z.time)|c=\(z.channel)|level=\(z.level)"
     }
@@ -39,7 +41,11 @@ private struct InspectedInput: Decodable {
         spacing: spacing ?? PreparationCalibration.assumedCubicSpacing(shape),
         calibrationSource: spacing == nil ? PreparationCalibration.estimatedSource : calibrationSource, sourceStat: sourceStat) }
 }
-private struct InspectionResult: Decodable { let inputs: [InspectedInput] }
+private struct InspectionResult: Decodable {
+    let inputs: [InspectedInput]
+    let tiffImages: [TIFFImage]?
+    let ignored: [String]?
+}
 struct PreparationRequest: Codable {
     var title: String
     var inputs: [PreparationInput]
@@ -48,6 +54,8 @@ struct PreparationRequest: Codable {
     var harmonics: Bool
     var execution: AtlasExecution? = nil
     var linkingMode: String? = nil
+    var segmentationMethod: String? = nil
+    var focusSettings: FocusSettings? = nil
 }
 private struct PreparationManifest: Decodable { let request: PreparationRequest }
 private struct PreparationProgress: Decodable { let stage: String; let fraction: Double }
@@ -87,16 +95,34 @@ struct PreparationMemoryPlan {
     }
 }
 
+struct FocusPreparationMemoryPlan {
+    let shape: [Int]
+    let estimatedPeakGiB, budgetGiB: Double
+    var fits: Bool { estimatedPeakGiB <= budgetGiB }
+    init?(input: PreparationInput, settings: FocusSettings, totalMemory: UInt64 = ProcessInfo.processInfo.physicalMemory) {
+        guard settings.valid, input.shape.count == 3, input.spacing.count == 3,
+              input.spacing.allSatisfy({ $0.isFinite && $0 > 0 }) else { return nil }
+        let factor = settings.cell_radius / 15, zFactor = input.spacing[0] / input.spacing[1] > 1 ? 1 : factor
+        shape = zip(input.shape, [zFactor,factor,factor]).map { max(1,Int((Double($0.0)/$0.1).rounded(.toNearestOrEven))) }
+        let padded = zip(zip(shape,[32,96,96]),[settings.stride_z,settings.stride_y,settings.stride_x]).map { max($0.0.1,$0.0.0+2*$0.1) }
+        estimatedPeakGiB = 6 + (32*padded.reduce(1.0) { $0*Double($1) } + 16*input.shape.reduce(1.0) { $0*Double($1) }) / 1_073_741_824
+        budgetGiB = min(11.5,0.65*Double(totalMemory)/1_073_741_824)
+    }
+}
+
 @MainActor final class DatasetPreparationStore: ObservableObject {
     let workers = AtlasWorkers()
     @Published var title = "New organoid dataset"
     @Published var inputs: [PreparationInput] = []
     @Published var settings = CellposeSettings(model: "cpsam_v2", scale: 0.35)
+    @Published var segmentationMethod = "cellpose"
+    @Published var focusSettings = FocusSettings()
     @Published var linkingMode = "standard"
     @Published var excludeDetached = true
     @Published var harmonics = true
     @Published var confirmed = false
     @Published var zarrCatalog: OMEZarrCatalog?
+    @Published var tiffCatalog: TIFFCatalog?
     @Published var output: URL?
     @Published private(set) var busy = false
     @Published private(set) var preparing = false
@@ -119,12 +145,31 @@ struct PreparationMemoryPlan {
     private let root: URL
     init(root: URL? = nil) {
         self.root = root ?? URL(fileURLWithPath: Bundle.main.object(forInfoDictionaryKey: "ExplorerProjectPath") as? String ?? FileManager.default.currentDirectoryPath)
+        focusSettings.checkpoint = UserDefaults.standard.string(forKey: "focus3dCheckpoint") ?? ""
+    }
+    var usesFocus: Bool { segmentationMethod == "focus3d" }
+    var focusInstalled: Bool {
+        FileManager.default.isExecutableFile(atPath: root.appendingPathComponent(".cache/focus3d-env/bin/python").path) &&
+        FileManager.default.fileExists(atPath: root.appendingPathComponent("vendor/focus3d/src/focus3d/segmentation/FOCUS3D/inference_win.py").path)
+    }
+    var focusReady: Bool {
+        focusInstalled && focusSettings.valid && FileManager.default.fileExists(atPath: focusSettings.checkpoint) &&
+        (focusSettings.config.isEmpty || FileManager.default.fileExists(atPath: focusSettings.config)) &&
+        inputs.filter { !$0.hasProvidedLabels }.allSatisfy { $0.spacing.count == 3 && abs($0.spacing[1]-$0.spacing[2]) <= 0.0001*max($0.spacing[1],$0.spacing[2]) }
+    }
+    var largestFocusMemoryPlan: FocusPreparationMemoryPlan? {
+        inputs.filter { !$0.hasProvidedLabels }.compactMap { FocusPreparationMemoryPlan(input: $0, settings: focusSettings) }.max { $0.estimatedPeakGiB < $1.estimatedPeakGiB }
     }
     var largestMemoryPlan: PreparationMemoryPlan? {
         inputs.filter { !$0.hasProvidedLabels }.compactMap { PreparationMemoryPlan(input: $0, scale: settings.scale, linkingMode: linkingMode) }.max { $0.estimatedPeakGiB < $1.estimatedPeakGiB }
     }
     var memoryBlocked: Bool {
         inputs.enumerated().contains { index, input in
+            if usesFocus {
+                guard !input.hasProvidedLabels, let plan = FocusPreparationMemoryPlan(input: input, settings: focusSettings), !plan.fits else { return false }
+                let completed = output?.appendingPathComponent(String(format: "stacks/Stack_%03d/aggregate.completed.json", index + 1))
+                return completed.map { !FileManager.default.fileExists(atPath: $0.path) } ?? true
+            }
             guard !input.hasProvidedLabels, let plan = PreparationMemoryPlan(input: input, scale: settings.scale, linkingMode: linkingMode), !plan.fits else { return false }
             let completed = output?.appendingPathComponent(String(format: "stacks/Stack_%03d/aggregate.completed.json", index + 1))
             return completed.map { !FileManager.default.fileExists(atPath: $0.path) } ?? true
@@ -157,11 +202,13 @@ struct PreparationMemoryPlan {
     var valid: Bool {
         !busy && !memoryBlocked && result == nil && confirmed && !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !inputs.isEmpty && output != nil &&
         inputs.allSatisfy { $0.spacing.count == 3 && $0.spacing.allSatisfy { $0.isFinite && $0 > 0 } } &&
-        settings.scale.isFinite && (0.05...1).contains(settings.scale) && settings.diameter.isFinite && (2...500).contains(settings.diameter) && settings.valid3DSettings
+        (usesFocus ? (inputs.allSatisfy(\.hasProvidedLabels) || focusReady) :
+         settings.scale.isFinite && (0.05...1).contains(settings.scale) && settings.diameter.isFinite && (2...500).contains(settings.diameter) && settings.valid3DSettings && settings.validModel)
     }
     func reset() {
         guard !busy else { return }
-        clearSlice(); title = "New organoid dataset"; inputs = []; settings = CellposeSettings(model: "cpsam_v2", scale: 0.35)
+        clearSlice(); zarrCatalog = nil; tiffCatalog = nil; title = "New organoid dataset"; inputs = []; settings = CellposeSettings(model: "cpsam_v2", scale: 0.35)
+        segmentationMethod = "cellpose"; focusSettings = FocusSettings(); focusSettings.checkpoint = UserDefaults.standard.string(forKey: "focus3dCheckpoint") ?? ""
         linkingMode = "standard"; excludeDetached = true; harmonics = true; confirmed = false; output = nil; result = nil
         progress = 0; workerProgress = [:]; error = nil; log = ""; stage = "Choose raw microscopy stacks to begin."
     }
@@ -173,6 +220,7 @@ struct PreparationMemoryPlan {
     }
     func previewSlice(input: PreparationInput, plane: String, index: Int, segment: Bool) {
         guard !busy, result == nil else { return }
+        guard !segment || !usesFocus else { error = "FOCUS-3D needs a complete 3D stack; the single-slice segmentation test is for Cellpose."; return }
         clearSlice()
         do {
             let destination = FileManager.default.temporaryDirectory.appendingPathComponent("atlas-slice-\(UUID().uuidString)")
@@ -189,7 +237,7 @@ struct PreparationMemoryPlan {
                     self.sliceLabels = NSImage(contentsOf: destination.appendingPathComponent("labels.png"))
                     if segment && self.sliceLabels == nil { throw DataError.invalid("Cell label preview is missing") }
                     self.sliceResult = value; self.progress = 1
-                    self.stage = segment ? "Slice test ready. Adjust the settings and test again, or prepare the full dataset." : "Raw slice ready. Test the current Cellpose settings when ready."
+                    self.stage = segment ? "Slice test ready. Adjust the settings and test again, or prepare the full dataset." : self.usesFocus ? "Raw slice ready. Prepare the full stack to run FOCUS-3D." : "Raw slice ready. Test the current Cellpose settings when ready."
                 } catch { self.error = error.localizedDescription }
             }
         } catch { self.error = error.localizedDescription }
@@ -223,18 +271,33 @@ struct PreparationMemoryPlan {
         zarrCatalog = nil; confirmed = false
         stage = "OME-Zarr selections added. Confirm voxel spacing, then test a slice or prepare the dataset."
     }
+    func addTIFF(_ image: TIFFImage, channel: Int, first: Int, last: Int, step: Int) {
+        guard !busy, image.channels.indices.contains(channel), first >= 0, first <= last, last < image.timepoints, step > 0 else { return }
+        for time in stride(from: first, through: last, by: step) {
+            let selection = TIFFSelection(series: image.series, time: time, channel: channel, axes: image.axes, sourceAxes: image.sourceAxes, sourceShape: image.sourceShape)
+            let input = PreparationInput(path: image.path, name: "\(image.name) · series \(image.series) · T\(time) · \(image.channels[channel])",
+                shape: image.shapeZYX, axes: "ZYX", dtype: image.dtype, spacing: image.spacing,
+                calibrationSource: image.calibrationSource, sourceStat: image.sourceStat, tiffSelection: selection)
+            if !inputs.contains(where: { $0.id == input.id }) { inputs.append(input) }
+        }
+        confirmed = false; stage = "TIFF selections added. Confirm voxel spacing, then test a slice or prepare the dataset."
+    }
     func addStacks() {
         let panel = NSOpenPanel(); panel.allowedContentTypes = atlasStackTypes; panel.allowsMultipleSelection = true
-        panel.message = "Choose single-channel 3D TIFF or NumPy (.npy) stacks. NumPy arrays are interpreted as Z/Y/X; confirm voxel spacing below."
+        panel.message = "Choose TIFF stacks or hyperstacks, or NumPy (.npy) Z/Y/X arrays. Multi-axis TIFFs open a series, time and channel selector."
         guard panel.runModal() == .OK else { return }
-        let paths = panel.urls.map(\.path).filter { path in !inputs.contains { $0.path == path } }
+        let paths = panel.urls.map(\.path)
         guard !paths.isEmpty else { return }
         let destination = FileManager.default.temporaryDirectory.appendingPathComponent("atlas-inspect-\(UUID().uuidString).json")
         execute("inspect", request: ["paths": paths], destination: destination) { [weak self] in
             guard let self else { return }
             do {
                 let inspected = try JSONDecoder().decode(InspectionResult.self, from: Data(contentsOf: destination))
-                self.inputs += inspected.inputs.map(\.input); self.confirmed = false
+                for input in inspected.inputs.map(\.input) where !self.inputs.contains(where: { $0.id == input.id }) { self.inputs.append(input) }
+                if let images = inspected.tiffImages, !images.isEmpty {
+                    self.tiffCatalog = TIFFCatalog(images: images, ignored: inspected.ignored ?? [])
+                }
+                self.confirmed = false
                 self.stage = "Confirm voxel spacing for every stack."
                 try? FileManager.default.removeItem(at: destination)
             } catch { self.error = error.localizedDescription }
@@ -267,17 +330,19 @@ struct PreparationMemoryPlan {
             let manifest = try JSONDecoder().decode(PreparationManifest.self, from: Data(contentsOf: url.appendingPathComponent("preparation.json")))
             let request = manifest.request
             title = request.title; inputs = request.inputs; settings = request.settings; linkingMode = request.linkingMode ?? "standard"
+            segmentationMethod = request.segmentationMethod ?? "cellpose"; focusSettings = request.focusSettings ?? FocusSettings()
             excludeDetached = request.excludeDetached; harmonics = request.harmonics; workers.restore(request.execution)
             output = url; confirmed = false; result = nil
             stage = "Review the saved settings, then prepare to resume completed steps."
         } catch { self.error = "This is not an Atlas preparation folder.\n\(error.localizedDescription)" }
     }
     func start() {
-        if settings.native3D { workers.splitStacks = false; linkingMode = "standard" }
-        guard workers.useLocal || !workers.enabled.isEmpty else { error = "Select this Mac or a paired worker in Nearby Macs."; return }
+        if settings.native3D || usesFocus { workers.splitStacks = false; linkingMode = "standard" }
+        guard usesFocus || workers.useLocal || !workers.enabled.isEmpty else { error = "Select this Mac or a paired worker in Nearby Macs."; return }
         guard valid, let output else { return }
         do {
-            let request = PreparationRequest(title: title, inputs: inputs, settings: settings, excludeDetached: excludeDetached, harmonics: harmonics, execution: workers.execution, linkingMode: linkingMode == "standard" ? nil : linkingMode)
+            let request = PreparationRequest(title: title, inputs: inputs, settings: settings, excludeDetached: excludeDetached, harmonics: harmonics, execution: usesFocus ? nil : workers.execution, linkingMode: linkingMode == "standard" ? nil : linkingMode,
+                segmentationMethod: usesFocus ? "focus3d" : nil, focusSettings: usesFocus ? focusSettings : nil)
             let json = try JSONSerialization.jsonObject(with: JSONEncoder().encode(request)) as! [String: Any]
             preparing = true; workerProgress = [:]; progress = 0; stage = "Checking inputs and output folder…"
             execute("build", request: json, destination: output) { [weak self] in
@@ -395,14 +460,14 @@ struct DatasetPreparationView: View {
                                     }
                                     Text(preparation.inputs[i].calibrationSource).font(.caption).foregroundStyle(.secondary)
                                     if let zarr = preparation.inputs[i].omeZarr {
-                                        Text("Time \(zarr.time) · channel \(zarr.channel) · level \(zarr.level) · \(zarr.label.map { "existing " + $0 + " instances" } ?? "Cellpose segmentation")")
+                                        Text("Time \(zarr.time) · channel \(zarr.channel) · level \(zarr.level) · \(zarr.label.map { "existing " + $0 + " instances" } ?? "automatic segmentation")")
                                             .font(.caption).foregroundStyle(.secondary)
                                     } else { HStack {
                                         Button("Use existing labels…") { preparation.importLabels(i) }
                                         if let labels = preparation.inputs[i].labels {
                                             Text(URL(fileURLWithPath: labels).lastPathComponent).font(.caption).lineLimit(1)
-                                            Button("Use Cellpose instead") { preparation.inputs[i].labels = nil; preparation.inputs[i].labelStat = nil }
-                                        } else { Text("Optional; otherwise Cellpose segments this stack.").font(.caption).foregroundStyle(.secondary) }
+                                            Button("Segment instead") { preparation.inputs[i].labels = nil; preparation.inputs[i].labelStat = nil }
+                                        } else { Text("Optional; otherwise the selected method segments this stack.").font(.caption).foregroundStyle(.secondary) }
                                     }
                                     }
                                     Divider()
@@ -414,10 +479,22 @@ struct DatasetPreparationView: View {
                     }
                     GroupBox("2 · Segmentation and comparisons") {
                         VStack(alignment: .leading, spacing: 10) {
+                            Picker("Initial segmentation", selection: $preparation.segmentationMethod) {
+                                Text("Cellpose").tag("cellpose"); Text("FOCUS-3D").tag("focus3d")
+                            }.pickerStyle(.segmented).frame(maxWidth: 440)
+                            if preparation.usesFocus {
+                                FocusPreparationControls(settings: $preparation.focusSettings)
+                                if !preparation.focusInstalled { Text("The FOCUS-3D environment is missing. Install it with scripts/setup_focus3d.sh.").font(.caption).foregroundStyle(.orange) }
+                                if !preparation.focusReady, !preparation.inputs.allSatisfy(\.hasProvidedLabels) {
+                                    Text("Select model weights and valid settings. Check that X and Y calibration match for each stack.").font(.caption).foregroundStyle(.orange)
+                                }
+                                if let plan = preparation.largestFocusMemoryPlan {
+                                    Text("Largest FOCUS inference grid: \(plan.shape.map(String.init).joined(separator: " × ")) · conservative memory estimate \(plan.estimatedPeakGiB, specifier: "%.1f") GiB / budget \(plan.budgetGiB, specifier: "%.1f") GiB.").font(.caption).foregroundStyle(.secondary)
+                                    if preparation.memoryBlocked { Text("Use a smaller crop or a Mac with more memory. Small model patches still require whole-volume buffers; do not change the estimated cell radius just to bypass the budget.").font(.caption).foregroundStyle(.orange) }
+                                }
+                            } else {
+                            CellposeModelControls(settings: $preparation.settings)
                             HStack {
-                                Picker("Cellpose model", selection: $preparation.settings.model) {
-                                    ForEach(CellposeSettings.models, id: \.self) { Text($0).tag($0) }
-                                }.frame(maxWidth: 300)
                                 Text("Scale")
                                 TextField("Scale", value: $preparation.settings.scale, format: .number).frame(width: 65)
                                 Text("Diameter")
@@ -452,6 +529,7 @@ struct DatasetPreparationView: View {
                                 Toggle("Correct background", isOn: $preparation.settings.background)
                                 Toggle("Use GPU when available", isOn: $preparation.settings.gpu)
                             }
+                            }
                             DatasetSliceTestView(preparation: preparation)
                             Toggle("Exclude cells outside the main organoid", isOn: $preparation.excludeDetached)
                             Text("Uses the largest connected component on the segmentation grid. Excluded cells remain available for review and manual inclusion.").font(.caption).foregroundStyle(.secondary)
@@ -460,7 +538,11 @@ struct DatasetPreparationView: View {
                                 .font(.caption).foregroundStyle(.secondary)
                         }.padding(6)
                     }
-                    AtlasWorkerSelection(workers: preparation.workers, showWorkers: $showWorkers, allowPlaneBatches: !preparation.settings.native3D)
+                    if preparation.usesFocus {
+                        Text("FOCUS-3D processes complete stacks on this Mac using its own patch stitching. Cellpose/u-Segment3D plane batches and Nearby Macs are not used.").font(.caption).foregroundStyle(.secondary)
+                    } else {
+                        AtlasWorkerSelection(workers: preparation.workers, showWorkers: $showWorkers, allowPlaneBatches: !preparation.settings.native3D)
+                    }
                     GroupBox("3 · Save and prepare") {
                         VStack(alignment: .leading, spacing: 10) {
                             TextField("Dataset name", text: $preparation.title).textFieldStyle(.roundedBorder)
@@ -512,9 +594,18 @@ struct DatasetPreparationView: View {
                     preparation.addOMEZarr(image, channel: channel, level: level, first: first, last: last, step: step, label: label)
                 }, close: { preparation.zarrCatalog = nil })
             }
+            .sheet(item: $preparation.tiffCatalog) { catalog in
+                TIFFImportView(catalog: catalog, add: { image, channel, first, last, step in
+                    preparation.addTIFF(image, channel: channel, first: first, last: last, step: step)
+                }, close: { preparation.tiffCatalog = nil })
+            }
             .sheet(isPresented: $showWorkers) { AtlasWorkersView(workers: preparation.workers, close: { showWorkers = false }) }
             .onChange(of: preparation.settings.segmentationMode) { _ in
                 if preparation.settings.native3D { preparation.workers.splitStacks = false; preparation.linkingMode = "standard" }
+            }
+            .onChange(of: preparation.segmentationMethod) { _ in
+                preparation.clearSlice()
+                if preparation.usesFocus { preparation.linkingMode = "standard"; preparation.workers.splitStacks = false }
             }
     }
 }

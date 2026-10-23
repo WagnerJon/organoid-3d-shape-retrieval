@@ -18,6 +18,76 @@ struct FocusSettings: Codable, Equatable {
         for (key,value) in json where merged[key] != nil { merged[key] = value }
         return try JSONDecoder().decode(FocusSettings.self,from:JSONSerialization.data(withJSONObject:merged))
     }
+    var valid: Bool {
+        let finite = [cell_radius, background_threshold, lower_percentile, upper_percentile, score_threshold, mask_threshold, stitch_iom, stitch_ratio].allSatisfy(\.isFinite)
+        return finite && (1...1000).contains(cell_radius) && lower_percentile >= 0 && upper_percentile <= 100 && lower_percentile < upper_percentile &&
+            min_size >= 0 && max_size >= 0 && (max_size == 0 || max_size >= min_size) && (1...16).contains(batch_size) &&
+            (1..<32).contains(stride_z) && (1..<96).contains(stride_y) && (1..<96).contains(stride_x) &&
+            [score_threshold, mask_threshold, stitch_iom, stitch_ratio].allSatisfy { (0...1).contains($0) } &&
+            min_edge_area >= 0 && stitch_core >= 1 && stitch_contact >= 1 && [min_size,max_size,min_edge_area,stitch_core,stitch_contact].allSatisfy { $0 <= Int(Int32.max) } &&
+            ["auto","cpu","mps","cuda:0"].contains(device)
+    }
+}
+
+/// Same upstream parameters as the comparison workflow, bound to a preparation.
+struct FocusPreparationControls: View {
+    @Binding var settings: FocusSettings
+    @State private var advanced = false
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text(settings.checkpoint.isEmpty ? "Choose a FOCUS-3D checkpoint" : URL(fileURLWithPath: settings.checkpoint).lastPathComponent)
+                    .font(.caption).lineLimit(1).help(settings.checkpoint)
+                Button("Choose checkpoint…") { chooseFile(config: false) }
+            }
+            HStack {
+                Text("Cell radius"); TextField("Cell radius", value: $settings.cell_radius, format: .number).frame(width: 70)
+                Text("pixels in the original XY image").font(.caption).foregroundStyle(.secondary)
+            }
+            Text("Z/XY ratio comes from each stack's calibration. X and Y spacing must match. Labels are restored to the original grid before measurements; Cellpose scale and diameter settings do not apply.")
+                .font(.caption).foregroundStyle(.secondary)
+            Toggle("Automatic background (5th percentile)", isOn: $settings.automatic_background)
+            if !settings.automatic_background { number("Background intensity", value: $settings.background_threshold) }
+            HStack { integer("Min size", value: $settings.min_size); integer("Max size", value: $settings.max_size) }
+            Text("Sizes are in resampled inference voxels; max 0 means unlimited.").font(.caption).foregroundStyle(.secondary)
+            HStack { number("Detection score threshold", value: $settings.score_threshold); number("Mask threshold", value: $settings.mask_threshold) }
+            Picker("Device", selection: $settings.device) {
+                Text("Auto (GPU preferred)").tag("auto"); Text("Apple GPU (MPS)").tag("mps"); Text("CPU").tag("cpu")
+            }.frame(maxWidth: 420)
+            DisclosureGroup("Advanced FOCUS-3D settings", isExpanded: $advanced) {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack { number("Low percentile", value: $settings.lower_percentile); number("High percentile", value: $settings.upper_percentile) }
+                    integer("Batch size", value: $settings.batch_size)
+                    Text("Batch 1 uses less memory. Model patch size is fixed at 32 × 96 × 96 (ZYX).").font(.caption).foregroundStyle(.secondary)
+                    HStack { integer("Stride Z", value: $settings.stride_z); integer("Y", value: $settings.stride_y); integer("X", value: $settings.stride_x) }
+                    Text("Smaller strides increase patch overlap and processing time. Valid ranges: Z 1–31, Y/X 1–95.").font(.caption).foregroundStyle(.secondary)
+                    integer("Minimum edge area", value: $settings.min_edge_area)
+                    number("Stitch face IoM", value: $settings.stitch_iom)
+                    integer("Minimum core voxels", value: $settings.stitch_core)
+                    integer("Minimum contact pixels", value: $settings.stitch_contact)
+                    number("Contact component ratio", value: $settings.stitch_ratio)
+                    HStack {
+                        Text(settings.config.isEmpty ? "Official model configuration" : URL(fileURLWithPath: settings.config).lastPathComponent).font(.caption).lineLimit(1)
+                        Button("Choose YAML…") { chooseFile(config: true) }
+                        if !settings.config.isEmpty { Button("Reset") { settings.config = "" } }
+                    }
+                }.padding(.top, 6)
+            }
+            if !settings.valid { Text("Review the parameter ranges. Thresholds must be 0–1, percentiles must increase, batch size 1–16, and sizes cannot be negative.").font(.caption).foregroundStyle(.orange) }
+        }
+    }
+    private func chooseFile(config: Bool) {
+        let panel = NSOpenPanel(); panel.message = config ? "Choose a FOCUS-3D model YAML configuration" : "Choose downloaded FOCUS-3D weights (.pth)"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        if config { settings.config = url.path }
+        else { settings.checkpoint = url.path; UserDefaults.standard.set(url.path, forKey: "focus3dCheckpoint") }
+    }
+    private func number(_ title: String, value: Binding<Double>) -> some View {
+        HStack { Text(title); TextField(title, value: value, format: .number).frame(width: 70) }
+    }
+    private func integer(_ title: String, value: Binding<Int>) -> some View {
+        HStack { Text(title); TextField(title, value: value, format: .number).frame(width: 70) }
+    }
 }
 
 struct FocusControls: View {

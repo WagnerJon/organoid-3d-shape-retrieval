@@ -49,6 +49,23 @@ class WorkerTests(unittest.TestCase):
         for server in cls.servers:server.shutdown();server.server_close()
         cls.temp.cleanup()
 
+    def test_custom_checkpoint_transfers_and_paths_remap_across_paired_workers(self):
+        # Imported labels keep this a transport test; no network inference is run.
+        model=self.root/'local model without extension';model.write_bytes(b'checkpoint transport fixture')
+        request=copy.deepcopy(self.request);request['inputs']=request['inputs'][:1]
+        request['execution']['workers']=request['execution']['workers'][:1]
+        request['settings'].update(model='local',localModelPath=str(model),localModelRuntime='cellpose3')
+        output=self.root/'local-checkpoint-distributed';atlas=build(request,output)
+        self.assertTrue((atlas/'dataset.json').is_file())
+        checksum=worker.sha(model)
+        self.assertEqual((self.servers[0].state.folder/'blobs'/checksum).read_bytes(),model.read_bytes())
+        run=output/'stacks/Stack_001'
+        config=json.loads((run/'run.json').read_text())
+        self.assertEqual(Path(config['localModelPath']).resolve(),model.resolve())
+        self.assertEqual(config['localModelSHA256'],checksum)
+        self.assertEqual(json.loads((run/'worker_provenance.json').read_text())['checkpointSHA256'],checksum)
+        self.assertEqual(build(request,output),atlas)
+
     def test_ome_zarr_is_materialized_before_remote_dispatch(self):
         import zarr
         from atlas_ome_zarr import inspect_store,selection_entry

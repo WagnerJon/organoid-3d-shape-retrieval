@@ -26,6 +26,7 @@ Original surfaces (blue), Allen Institute VN-DGCNN/SDF reconstructions and a com
 | [Allen VN-DGCNN / SDF](docs/ALLEN_REFERENCE_BENCHMARK.md) | Strong surface reconstruction and rotation stability; limited head/decoder adaptation did not lead retrieval. |
 | [Point-MAE](docs/POINT_MAE_BENCHMARK.md) | Adapted pose-averaged features reduced neighbor cost by **12.1%** before adjustment; the advantage weakened after controlling for volume, elongation and sphericity. |
 | [ShapeEmbedLite3D prototype](docs/SHAPEEMBED_LITE_3D.md) | Unofficial distance-matrix adaptation: rotation/reflection-invariant descriptors, but sparse reconstructions still underfit cell geometry. |
+| [Classical / fractional 3D Zernike](docs/FRACTIONAL_ZERNIKE.md) | Encoded 961 cells; fractional moments did not establish a retrieval improvement over classical Zernike. Standalone research scripts. |
 
 Neighbor-cost comparisons use 46 matched queries from 48 validation cells, with candidates from other image-similarity groups. These are exploratory geometry results, not phenotype-classification scores. No experimental-condition labels are available; added biological information beyond morphometry remains unproven.
 
@@ -37,7 +38,7 @@ Blue: query. Orange: each method’s nearest segmented cell, aligned for display
 
 ## Explore the results
 
-**[Organoid Atlas](native/OrganoidExplorer/README.md)** is the native macOS viewer and organizer for these experiments: linked plots, tables, raw slices, 3D surfaces and side-by-side shape comparisons. It also provides segmentation trials with Cellpose models, PanSeg and FOCUS-3D.
+**[Organoid Atlas](native/OrganoidExplorer/README.md)** is the native macOS viewer and organizer for these experiments: linked plots, tables, raw slices, 3D surfaces and side-by-side shape comparisons. It also provides segmentation trials with Cellpose models, PanSeg and FOCUS-3D. Fullscreen reconstructions offer ID or feature coloring and customizable PNG export. Dataset preparation supports TIFF time/channel selection, local Cellpose checkpoints and initial FOCUS-3D segmentation; Compare Methods lets you choose which missing methods to calculate.
 
 **No data yet? Open the bundled demo** from **File → Open Demo Dataset**. It includes 72 synthetic objects—12 variations each of star, sphere, ellipsoid, cactus, sausage and donut—with 36 precomputed representation methods, image slices and 3D surfaces. Linked plots, three-axis views and default shape groups work without downloading models or installing Python. [Demo and setup](native/OrganoidExplorer/README.md#built-in-demo).
 

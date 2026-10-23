@@ -11,7 +11,7 @@ def infer(source, settings, output):
     if settings.get('segmentationMode')=='cellpose3d':raise ValueError('Native Cellpose 3D requires a complete stack, not plane batches.')
     import numpy as np
     import torch
-    from cellpose import models
+    from atlas_cellpose_models import make_model, model_metadata
     from atlas_worker import atomic, compute_slot
     output = Path(output); output.mkdir(parents=True, exist_ok=True)
     planes = np.load(source, mmap_mode='r', allow_pickle=False)
@@ -20,7 +20,8 @@ def infer(source, settings, output):
     if not np.isfinite(planes).all(): raise ValueError('Nonfinite batch intensities')
     with compute_slot():
         gpu = settings['gpu'] and (torch.backends.mps.is_available() or torch.cuda.is_available())
-        model = models.CellposeModel(pretrained_model=settings['model'], gpu=gpu)
+        from atlas_cellpose_models import factory_arguments
+        model = make_model(**factory_arguments(dict(settings,gpu=gpu)))
         prob = np.lib.format.open_memmap(output/'prob.npy', mode='w+', dtype='float32', shape=planes.shape)
         flow = np.lib.format.open_memmap(output/'flow.npy', mode='w+', dtype='float32', shape=(2,)+planes.shape)
         for i, image in enumerate(planes):
@@ -31,7 +32,7 @@ def infer(source, settings, output):
             atomic(output/'status.json', dict(stage=f'Plane {i+1}/{len(planes)}'))
         prob.flush(); flow.flush()
         if not pipeline.finite(prob) or not pipeline.finite(flow): raise ValueError('Nonfinite predictions')
-        atomic(output/'batch.completed.json', dict(shape=list(planes.shape), device='GPU' if gpu else 'CPU'))
+        atomic(output/'batch.completed.json', dict(shape=list(planes.shape), device='GPU' if gpu else 'CPU',modelRuntime=model_metadata(settings['model'],settings)))
 
 
 def prepare(entry, settings, run):
@@ -39,6 +40,10 @@ def prepare(entry, settings, run):
     from types import SimpleNamespace
     from atlas_worker import compute_slot
     args = SimpleNamespace(input=Path(entry['path']), output=Path(run), spacing=entry['spacing'], scale=settings['scale'], diameter=settings['diameter'], model=settings['model'], cpu=not settings['gpu'], no_background=not settings['background'], through_stage='preprocess',linking_mode=settings.get('linkingMode','standard'))
+    if settings.get('model')=='local':
+        from atlas_cellpose_models import local_fields
+        local=local_fields(settings,freeze=True)
+        args.local_model_path=local['localModelPath'];args.local_model_runtime=local['localModelRuntime'];args.local_model_sha256=local['localModelSHA256']
     with compute_slot():
         pipeline.run(args)
 

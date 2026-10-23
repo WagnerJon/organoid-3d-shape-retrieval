@@ -117,10 +117,12 @@ def infer_view(run,view,settings,model_factory=None):
     import numpy as np
     from atlas_streaming_core import disk
     order={'xy':(0,1,2),'xz':(1,0,2),'yz':(2,0,1)}[view]
+    from atlas_cellpose_models import local_fields
+    settings=dict(settings,**local_fields(settings,freeze=True))
     run=Path(run);processed=np.load(run/'processed.npy',mmap_mode='r')
     shape=processed.shape;plane_shape=tuple(shape[a] for a in order)
     checkpoint=run/'predictions'/f'{view}.streamed.json'
-    signature=hashlib.sha256(json.dumps(dict(settings=settings,shape=shape,source=[(run/'processed.npy').stat().st_size,(run/'processed.npy').stat().st_mtime_ns],version=VERSION,implementation=digest(__file__),runtime=runtime_signature()),sort_keys=True).encode()).hexdigest()
+    signature=hashlib.sha256(json.dumps(dict(settings=settings,shape=shape,source=[(run/'processed.npy').stat().st_size,(run/'processed.npy').stat().st_mtime_ns],version=VERSION,implementation=digest(__file__),modelAdapter=digest(Path(__file__).with_name('atlas_cellpose_models.py')),runtime=runtime_signature()),sort_keys=True).encode()).hexdigest()
     prob_path=run/'predictions'/f'{view}_prob.npy';flow_path=run/'predictions'/f'{view}_flow.npy'
     state=json.loads(checkpoint.read_text()) if checkpoint.exists() else dict(identity=signature,nextPlane=0)
     if state.get('identity')!=signature:raise ValueError('Cellpose plane checkpoint settings changed; choose a new results folder.')
@@ -133,9 +135,10 @@ def infer_view(run,view,settings,model_factory=None):
         probability=disk(prob_path,shape);flow=disk(flow_path,(2,)+shape)
     if start==plane_shape[0]:return dict(view=view,shape=list(shape),execution='Using completed streamed view')
     if model_factory is None:
-        from cellpose import models
-        model_factory=models.CellposeModel
-    model=model_factory(pretrained_model=settings['model'],gpu=settings['gpu'])
+        from atlas_cellpose_models import make_model
+        model_factory=make_model
+    from atlas_cellpose_models import factory_arguments
+    model=model_factory(**factory_arguments(settings))
     plane_prob=probability.transpose(order);plane_flow=flow.transpose((0,)+tuple(a+1 for a in order))
     planes=processed.transpose(order)
     for index in range(start,plane_shape[0]):

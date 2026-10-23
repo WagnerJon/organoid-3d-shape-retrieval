@@ -239,6 +239,8 @@ struct VolumeData {
     @Published var clip = false
     @Published var isolate = false
     @Published var hideExcluded = false
+    @Published var reconstructionColors = PlotColorSettings()
+    @Published var reconstructionHighlight = true
     @Published var overlay = true
     @Published var contrast = 1.0
     @Published var volume: VolumeData?

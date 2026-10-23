@@ -33,7 +33,7 @@ def residual(frame, values, fit):
     return values-(terms@fit['coef'].T+fit['intercept'])
 
 
-def main(folder):
+def main(folder, only=None):
     path = folder/'dataset.json'
     before = sha256(path)
     data = json.loads(path.read_text())
@@ -103,6 +103,8 @@ def main(folder):
         frame.loc[bad, column] = fill
     specs = []
     def add(key, name, vectors, description, family='shape', metric='euclidean', projection='pca'):
+        if only is not None and key not in only:
+            return
         vectors = np.asarray(vectors, float)
         assert len(vectors) == len(data['cells']) and np.isfinite(vectors).all()
         spec = dict(id=key, name=name, metric=metric, dimensions=vectors.shape[1],

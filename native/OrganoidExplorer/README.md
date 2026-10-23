@@ -31,9 +31,12 @@ from the archive. Building from the checked-in resource needs no model files.
 
 ## Complete representations for a loaded dataset
 
-In **Compare Methods**, choose **Calculate missing methods**. Atlas checks all
+In **Compare Methods**, choose **Calculate missing methods** to open a checklist.
+Select individual methods or whole families, use **Select all** / **Clear**, then
+press **Calculate selected**. Unavailable families show the missing inputs and
+cannot be selected; already complete methods are omitted. Atlas checks all
 cells in the loaded experiment, independent of the current plots and filters,
-and fills missing representations using the existing frozen encoders. Available
+and fills only selected missing representations using the existing frozen encoders. Available
 families include traditional feature controls, spatial PCA, spherical harmonics,
 PointNet++, ShapeEmbedLite3D, Point-MAE, Allen VN-DGCNN, SimCLR/IConE and quantized
 CAJAL. The original cohort-specific CAJAL validation reference is not transferable.
@@ -45,6 +48,13 @@ decisions are retained. New plot fits and organoid means use included cells;
 organoid representation means use QC-passing included cells. Cell-only methods
 remain cell-only. No encoders are trained. CAJAL's pairwise calculation can take
 considerably longer on larger datasets.
+
+Related methods reuse shared preprocessing and cached outputs. Selecting only
+traditional feature subsets skips surface/SDF encoding. Learned inference runs
+only selected model variants and Point-MAE views; a later selection can reuse
+the earlier cache without publishing unselected methods. The command-line
+equivalent accepts repeated `--method METHOD_ID` arguments on
+`scripts/atlas_missing_methods.py run`.
 
 The result panel lists missing model/reference files, unavailable original raw
 images or processing grids, and failed families. Frozen intensity encoders need
@@ -77,8 +87,8 @@ at a modest processing scale on a 16 GB Mac. This is an additional method to
 evaluate, not an established improvement in segmentation accuracy.
 
 Choose **New Dataset…** from the opening screen, toolbar or File menu (⌘N).
-Add one or more single-channel Z/Y/X TIFF or NumPy (`.npy`) stacks, confirm each stack's voxel
-spacing in µm, choose Cellpose `cpsam_v2`, `cpdino` or `cpdino-vitb`, and select
+Add one or more TIFF stacks/hyperstacks or NumPy (`.npy`) Z/Y/X stacks, confirm each stack's voxel
+spacing in µm, choose Cellpose (`cpsam_v2`, `cpdino`, `cpdino-vitb`, `cyto3` or `nuclei`) or **FOCUS-3D** as the initial segmentation method, and select
 a new results folder. Existing integer label TIFFs can replace segmentation for
 individual stacks. OME and ImageJ calibration are suggested when available;
 missing calibration defaults to **Assume cubic stack**: X = Y = 1 and
@@ -86,6 +96,69 @@ Z = max(image width, image height) / slice count. Only Z changes; rectangular
 images retain their XY aspect ratio. This is an explicit geometry estimate in
 nominal µm, not measured physical calibration; edit it if known. Existing
 calibration and saved preparation settings are preserved.
+
+**Multi-axis TIFFs:** ImageJ and OME-TIFF hyperstacks open a series/channel/time
+selector. Add one frame, a frame range, or all time points; each becomes an
+independent 3D sample. Named axes determine Z/Y/X rather than flattening time
+into depth. RGB sample channels can also be selected. Preview reads one TIFF
+page at a time. Preparation caches only the selected volumes as calibrated
+Z/Y/X OME-TIFFs before segmentation or worker dispatch; original axes, selection,
+source hash and calibration are retained. Plain 3D stacks keep their existing
+import behavior. Unnamed non-spatial axes require explicit metadata, and decoded
+pages larger than 256 MiB must be cropped/retiled first. This does not implement
+cell tracking across time.
+
+**Local Cellpose checkpoints:** choose **Local checkpoint… → Choose checkpoint…**
+in preparation or either comparison panel. Select **Cellpose 3 · classic CNN**
+for cyto/nuclei-based training, or **Cellpose 4 · SAM / DINO** for modern
+checkpoints. Files without extensions are supported. The explicit path, runtime
+and SHA-256 are saved with results; missing files, mismatched runtimes and model
+fallbacks produce errors. Checkpoint content changes invalidate checkpoints and
+resume identities. Slice tests, native 3D, streamed linking and distributed plane
+inference use the same selection. Paired workers receive an owner-verified copy
+of the checkpoint through the existing encrypted file-transfer mechanism.
+
+**Classic Cellpose CNNs:** `cyto3` and `nuclei` are available
+in preparation, slice tests and both Cellpose comparison panels. They use the
+official Cellpose 3.1.1.3 Python source under a private module namespace; the
+installed Cellpose 4 SAM/DINO runtime and dependencies are retained. The small
+runtime wheel downloads once from PyPI and is SHA-256 pinned. Model weights use
+the upstream filenames (`cyto3` and `nucleitorch_0`), with
+runtime/version/weight provenance saved. Unknown models and unexpected fallback
+weights are rejected. Single-channel data uses grayscale plus an empty nuclear
+channel. Both u-Segment3D linking modes, native Cellpose 3D, complete-stack workers
+and distributed plane batches use the same model selector. Update the worker
+package on other Macs when updating Atlas's processing scripts.
+
+On this Mac, three warm GPU prediction repeats on the 378×401 central X001 slice
+took a median 0.182 s for `cyto3` versus 2.615 s for `cpsam_v2` (14.4×). This excludes
+loading, masks and 3D linking; it is not an accuracy benchmark or a whole-stack
+speed guarantee. A real 8×64×64 native 3D `cyto3` GPU check also completed. `cyto3` is installed and tested locally. Failed downloads report the
+expected filename and location without silently selecting another model.
+
+**FOCUS-3D initial segmentation:** choose **Initial segmentation → FOCUS-3D** in
+the preparation dialog. The checkpoint path is shared with the comparison tab.
+Controls include original-XY cell radius, background cutoff, detection/mask
+thresholds, inference-voxel size filters and device. Advanced controls expose
+normalization percentiles, batch size, overlapping patch strides, stitching
+thresholds and an optional compatible YAML. The model patch remains fixed at
+32 × 96 × 96. Z/XY ratio comes from each stack's calibration; X/Y spacing must match.
+Cellpose scale, diameter and u-Segment3D settings are not applied to FOCUS.
+
+Inference uses the dedicated FOCUS environment and restores labels to the original
+raw grid. Atlas then computes the usual physical measurements, meshes, QC,
+organoid membership and optional harmonics. Settings, model/config hashes and
+upstream metadata are retained with the stack. Completed inference/export stages
+can resume; changed settings or weights require a new results folder. No Cellpose
+inference is run. TIFF, NumPy and selected OME-Zarr volumes use the same workflow.
+
+This mode runs locally on the preparing Mac, with progress, cancellation and a
+memory safeguard. Distributed Cellpose plane batches and Nearby Macs are disabled
+for FOCUS preparation. The memory estimate includes dense native/inference-grid
+buffers: patch inference is not out-of-core. Batch 1 is recommended on 16 GB Macs;
+use a smaller crop when the estimate exceeds the budget rather than changing the
+cell-radius estimate solely to bypass it. Raw slice inspection remains available;
+FOCUS is not presented as a 2D Cellpose slice test.
 
 NumPy imports accept numeric 3D arrays in Z/Y/X order, including the BlastoSPIM2
 image stacks. They contain no embedded voxel spacing: Atlas estimates cubic-stack depth as above; edit
@@ -382,3 +455,21 @@ selection. The expanded 3D view renders rotatable cell surfaces.
 **Discover Shape Groups** offers closest-shape
 galleries across methods and automatic full-distance HDBSCAN groups, representative
 shapes, linked cameras and group marking. See [interactive shape guide](../../docs/ATLAS_INTERACTIVE_SHAPES.md).
+
+### Fullscreen reconstruction and image export
+
+The expand button beside **Reconstruction** opens a native fullscreen window.
+It reuses the loaded meshes and current camera. Rotation and zoom are linked to
+the inline view; selection, isolation, exclusions and calibrated slicing remain
+connected to Atlas. Choose **Random by cell ID**, or any available cell feature
+with the standard color palettes and value legend. ID colors are stable across
+launches; red marks excluded cells in ID mode. Feature mode uses gray for missing
+values. Coloring changes display materials without rebuilding surfaces or
+changing analysis groups.
+
+The camera button is available inline and in fullscreen. Its existing rendering
+menu offers PNG save/copy, pixel dimensions, physical XYZ axes, title, legend,
+selection highlighting, and dark/light/custom/transparent backgrounds. Rendering
+uses a separate scene and the current camera, leaving live colors and clipping
+unchanged. **Done** closes the expanded view; the fullscreen toggle uses the
+standard macOS behavior.

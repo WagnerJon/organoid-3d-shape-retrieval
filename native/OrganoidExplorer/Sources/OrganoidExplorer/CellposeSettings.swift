@@ -1,8 +1,21 @@
 import SwiftUI
+import AppKit
 
 struct CellposeSettings: Codable, Equatable {
-    static let models = ["cpsam_v2","cpdino","cpdino-vitb"]
+    static let models = ["cpsam_v2","cpdino","cpdino-vitb","cyto3","nuclei","local"]
+    static func modelName(_ model: String) -> String {
+        ["cyto3": "cyto3 · classic CNN", "nuclei": "nuclei · classic CNN", "local": "Local checkpoint…"][model] ?? model
+    }
     var model = "cpsam_v2", scale = 0.5, diameter = 30.0, background = true, gpu = true
+    var localModelPath = "", localModelRuntime = "cellpose3", localModelSHA256 = ""
+    var validModel: Bool {
+        guard Self.models.contains(model) else { return false }
+        guard model == "local" else { return true }
+        var directory: ObjCBool = false
+        return ["cellpose3","cellpose4"].contains(localModelRuntime) && !localModelPath.isEmpty &&
+            FileManager.default.fileExists(atPath: localModelPath, isDirectory: &directory) && !directory.boolValue &&
+            FileManager.default.isReadableFile(atPath: localModelPath)
+    }
     var flowThreshold = 0.4
     var segmentationMode = "usegment3d"
     var flow3DSmooth = 0.0, cellprobThreshold = 0.0
@@ -32,11 +45,45 @@ extension CellposeSettings {
         diameter = try values.decode(Double.self, forKey: .diameter)
         background = try values.decode(Bool.self, forKey: .background)
         gpu = try values.decode(Bool.self, forKey: .gpu)
+        localModelPath = try values.decodeIfPresent(String.self, forKey: .localModelPath) ?? ""
+        localModelRuntime = try values.decodeIfPresent(String.self, forKey: .localModelRuntime) ?? "cellpose3"
+        localModelSHA256 = try values.decodeIfPresent(String.self, forKey: .localModelSHA256) ?? ""
         flowThreshold = try values.decodeIfPresent(Double.self, forKey: .flowThreshold) ?? 0.4
         segmentationMode = try values.decodeIfPresent(String.self, forKey: .segmentationMode) ?? "usegment3d"
         flow3DSmooth = try values.decodeIfPresent(Double.self, forKey: .flow3DSmooth) ?? 0
         cellprobThreshold = try values.decodeIfPresent(Double.self, forKey: .cellprobThreshold) ?? 0
         minSize3D = try values.decodeIfPresent(Int.self, forKey: .minSize3D) ?? 15
+    }
+}
+
+struct CellposeModelControls: View {
+    @Binding var settings: CellposeSettings
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Picker("Model", selection: $settings.model) {
+                ForEach(CellposeSettings.models, id: \.self) { Text(CellposeSettings.modelName($0)).tag($0) }
+            }
+            if settings.model == "local" {
+                HStack {
+                    TextField("Checkpoint path", text: $settings.localModelPath)
+                    Button("Choose checkpoint…") {
+                        let panel = NSOpenPanel(); panel.canChooseDirectories = false; panel.allowsMultipleSelection = false
+                        panel.message = "Choose a Cellpose checkpoint. Files without an extension are supported."
+                        if panel.runModal() == .OK, let url = panel.url { settings.localModelPath = url.path; settings.localModelSHA256 = "" }
+                    }
+                }
+                Picker("Checkpoint runtime", selection: $settings.localModelRuntime) {
+                    Text("Cellpose 3 · classic CNN (cyto/nuclei)").tag("cellpose3")
+                    Text("Cellpose 4 · SAM / DINO").tag("cellpose4")
+                }
+                Text("Choose the runtime matching the model’s training version. Atlas loads the selected file directly; its checksum is saved with results. Paired workers receive a copy with the job.")
+                    .font(.caption).foregroundStyle(.secondary)
+                if !settings.validModel { Text("Choose an existing Cellpose checkpoint file.").font(.caption).foregroundStyle(.orange) }
+            } else if ["cyto3","nuclei"].contains(settings.model) {
+                Text("Smaller classic CNN. Uses the official Cellpose 3 runtime alongside Cellpose 4.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }.onChange(of: settings.localModelPath) { settings.localModelSHA256 = "" }
     }
 }
 
@@ -77,15 +124,15 @@ struct CellposeControls: View {
     var settings: Binding<CellposeSettings> { side == 1 ? $store.cellposeA : $store.cellposeB }
     var body: some View {
         VStack(alignment:.leading,spacing:8) {
-            Picker("Model",selection:settings.model) { ForEach(CellposeSettings.models,id:\.self) { Text($0).tag($0) } }
+            CellposeModelControls(settings: settings)
             HStack { Text("Scale"); TextField("Scale",value:settings.scale,format:.number).frame(width:55); Text("0.05–1").font(.caption).foregroundStyle(.secondary) }
             HStack { Text("Diameter"); TextField("Diameter",value:settings.diameter,format:.number).frame(width:55); Text("processed px").font(.caption).foregroundStyle(.secondary) }
             CellposeModeControls(settings: settings)
             Toggle("Correct background",isOn:settings.background)
             Toggle("GPU when available",isOn:settings.gpu)
-            Text("Model weights download on first use.").font(.caption2).foregroundStyle(.secondary)
+            if settings.wrappedValue.model != "local" { Text("Model weights download on first use.").font(.caption2).foregroundStyle(.secondary) }
             HStack {
-                Button("Run Cellpose \(side == 1 ? "A" : "B")") { store.run([side == 1 ? "cellpose" : "cellposeB"]) }.disabled(!store.canRun || !settings.wrappedValue.valid3DSettings)
+                Button("Run Cellpose \(side == 1 ? "A" : "B")") { store.run([side == 1 ? "cellpose" : "cellposeB"]) }.disabled(!store.canRun || !settings.wrappedValue.valid3DSettings || !settings.wrappedValue.validModel)
                 Button(side == 1 ? "Load existing…" : "Import labels…") { store.importLabels(method:"cellpose",existing:side == 1,side:side) }.disabled(!store.canRun)
             }
         }.frame(maxWidth:.infinity,alignment:.leading).padding(6)

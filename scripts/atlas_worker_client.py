@@ -141,7 +141,15 @@ def remote_stack(endpoint,entry,settings,run,report,credential_path=None,task_pr
     if info['id']!=endpoint['id'] or {k:info[k] for k in engine()}!=engine():raise ValueError('Worker processing versions differ; update its package.')
     raw=upload(endpoint,entry['path'],token,report)
     label=upload(endpoint,entry['labels'],token,report) if entry.get('labels') else None
+    settings=dict(settings)
+    model_hash=None
+    if settings.get('model')=='local':
+        from atlas_cellpose_models import local_fields
+        settings.update(local_fields(settings,freeze=True))
+        model_hash=upload(endpoint,settings['localModelPath'],token,report)
+        if model_hash!=settings['localModelSHA256']:raise ValueError('Local model changed during worker upload')
     spec=dict(rawHash=raw,labelHash=label,spacing=entry['spacing'],settings=settings)
+    if model_hash:spec['modelHash']=model_hash
     if entry.get('result'):spec['kind']='inference-batch'
     payload=dict(spec=spec,compatibility=engine())
     while True:
@@ -168,7 +176,12 @@ def remote_stack(endpoint,entry,settings,run,report,credential_path=None,task_pr
             if saved['status'] in ('failed','cancelled','interrupted'):raise RuntimeError(saved['stage']+' · Resume preparation to retry cached stages.')
             _CANCEL.wait(1)
         report('Receiving results');receive(endpoint,job,token,run,entry)
-        return dict(worker=endpoint['name'],id=job,sourceSHA256=raw)
+        if model_hash and not entry.get('result'):
+            cfg=json.loads((Path(run)/'run.json').read_text());cfg.update(local_fields(settings))
+            atomic(Path(run)/'run.json',cfg)
+        record=dict(worker=endpoint['name'],id=job,sourceSHA256=raw)
+        if model_hash:record['checkpointSHA256']=model_hash
+        return record
     finally:
         if _CANCEL.is_set():
             with contextlib.suppress(Exception):api(endpoint,'DELETE',f'/jobs/{job}',token=token,timeout=5)

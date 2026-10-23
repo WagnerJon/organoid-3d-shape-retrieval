@@ -118,3 +118,84 @@ struct OMEZarrImportView: View {
         .onChange(of: imageID) { channel = 0; level = 0; first = 0; last = 0; step = 1; label = "" }
     }
 }
+
+struct TIFFSelection: Codable, Equatable {
+    let series, time, channel: Int
+    let axes, sourceAxes: String
+    let sourceShape: [Int]
+}
+struct TIFFImage: Decodable, Identifiable {
+    let path, name, seriesName, axes, sourceAxes, dtype, calibrationSource: String
+    let series, timepoints: Int
+    let sourceShape, shapeZYX: [Int]
+    let channels: [String]
+    let spacing: [Double]
+    let sourceStat: [Int64]
+    var id: String { path + "|series=\(series)" }
+}
+struct TIFFCatalog: Identifiable {
+    let images: [TIFFImage]
+    let ignored: [String]
+    var id: String { images.map(\.id).joined(separator: "|") }
+}
+struct TIFFImportView: View {
+    let catalog: TIFFCatalog
+    let add: (TIFFImage, Int, Int, Int, Int) -> Void
+    let close: () -> Void
+    @State private var imageID = ""
+    @State private var channel = 0
+    @State private var first = 0
+    @State private var last = 0
+    @State private var step = 1
+    @State private var added = false
+    var image: TIFFImage? { catalog.images.first { $0.id == imageID } ?? catalog.images.first }
+    var count: Int { last >= first ? (last-first)/max(1,step)+1 : 0 }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack {
+                Text("Import multi-axis TIFF").font(.title2.bold())
+                Spacer(); Button("Done", action: close).keyboardShortcut(.cancelAction)
+            }
+            if let image {
+                Picker("Image series", selection: $imageID) {
+                    ForEach(catalog.images) { Text("\($0.name) · \($0.seriesName) [\($0.series)]").tag($0.id) }
+                }
+                Text("Axes: \(image.sourceAxes) · \(image.timepoints) time points · \(image.channels.count) channels")
+                    .font(.caption).foregroundStyle(.secondary)
+                Text("Selected 3D grid Z/Y/X: \(image.shapeZYX.map(String.init).joined(separator: " × "))")
+                Text(image.path).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+                Picker("Channel", selection: $channel) {
+                    ForEach(image.channels.indices, id: \.self) { Text("\($0) · \(image.channels[$0])").tag($0) }
+                }
+                GroupBox("Time points · zero-based indices") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Stepper("First: \(first)", value: $first, in: 0...max(0,image.timepoints-1))
+                            .onChange(of: first) { if last < first { last = first }; added = false }
+                        Stepper("Last: \(last)", value: $last, in: first...max(first,image.timepoints-1))
+                        Stepper("Every \(step) frame(s)", value: $step, in: 1...max(1,image.timepoints))
+                        Button("Select all time points") { first = 0; last = image.timepoints-1; step = 1; added = false }
+                    }.padding(6)
+                }
+                Text("Voxel spacing Z/Y/X: \(image.spacing.map { String(format: "%.4g", $0) }.joined(separator: " / ")) µm")
+                    .font(.caption).foregroundStyle(.secondary)
+                Text(image.calibrationSource).font(.caption).foregroundStyle(image.calibrationSource.contains("estimated") ? .orange : .secondary)
+                Text("Each selected frame becomes an independent stack. Only the selected channel and frames are copied into calibrated 3D stacks when preparation starts. Preview reads one image page at a time. Time points are not merged into depth or linked as cell tracks.")
+                    .font(.caption).foregroundStyle(.secondary)
+                if !catalog.ignored.isEmpty {
+                    Text("Skipped: " + catalog.ignored.joined(separator: "; ")).font(.caption2).foregroundStyle(.secondary)
+                }
+                if added { Text("Selection added. Choose another channel or series, or press Done to continue.").font(.caption).foregroundStyle(.secondary) }
+                HStack {
+                    Spacer()
+                    Button("Add \(count) volume(s)") { add(image,channel,first,last,step); added = true }
+                        .buttonStyle(.borderedProminent).disabled(count == 0 || added).keyboardShortcut(.defaultAction)
+                }
+            }
+        }.padding(24).frame(width: 650)
+        .onAppear { imageID = catalog.images.first?.id ?? "" }
+        .onChange(of: imageID) { channel = 0; first = 0; last = 0; step = 1; added = false }
+        .onChange(of: channel) { added = false }
+        .onChange(of: last) { added = false }
+        .onChange(of: step) { added = false }
+    }
+}

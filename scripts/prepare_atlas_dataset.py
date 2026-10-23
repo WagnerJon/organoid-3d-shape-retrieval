@@ -32,49 +32,26 @@ def event(stage, fraction):
 
 
 def inspect(path):
-    import tifffile
     path = Path(path).resolve()
     if path.suffix.lower() == '.npy':
         from atlas_numpy import inspect as inspect_numpy
         return inspect_numpy(path)
-    with tifffile.TiffFile(path) as tif:
-        series = tif.series[0]
-        if len(tif.series) != 1 or series.axes not in ('ZYX', 'QYX', 'IYX') or len(series.shape) != 3 or min(series.shape) < 2:
-            raise ValueError(f'{path.name}: select a single-channel 3D Z/Y/X TIFF; time, channels and multiple series are not supported.')
-        if len(tif.pages) != series.shape[0]:
-            raise ValueError(f'{path.name}: TIFF must contain one page per Z plane.')
-        spacing, source = None, 'Enter voxel spacing in micrometers'
-        if tif.ome_metadata:
-            import xml.etree.ElementTree as ET
-            pixels = next((e for e in ET.fromstring(tif.ome_metadata).iter() if e.tag.split('}')[-1] == 'Pixels'), None)
-            if pixels is not None:
-                units = {'µm':1., 'μm':1., 'um':1., 'nm':.001, 'mm':1000.}
-                try:
-                    spacing = [float(pixels.attrib['PhysicalSize'+axis])*units[pixels.attrib.get('PhysicalSize'+axis+'Unit', 'µm')] for axis in 'ZYX']
-                    source = 'OME physical voxel sizes'
-                except (KeyError, ValueError):
-                    spacing = None
-        if spacing is None:
-            metadata = tif.imagej_metadata or {}
-            if metadata.get('unit') in ('micron', 'microns', 'um', 'µm', 'μm') and 'spacing' in metadata:
-                try:
-                    def inverse(key):
-                        a, b = tif.pages[0].tags[key].value
-                        return b/a
-                    spacing = [float(metadata['spacing']), inverse('YResolution'), inverse('XResolution')]
-                    source = 'ImageJ spacing and resolution tags'
-                except (KeyError, ValueError, ZeroDivisionError):
-                    spacing = None
-        if spacing is not None and not all(math.isfinite(v) and v > 0 for v in spacing):
-            spacing = None
-        if spacing is None:
-            from atlas_calibration import assumed_cubic_spacing, ESTIMATED_SOURCE
-            spacing = assumed_cubic_spacing(series.shape)
-            source = ESTIMATED_SOURCE
-        stat = path.stat()
-        return dict(path=str(path), name=path.name, shape=list(series.shape), axes=series.axes,
-                    dtype=str(series.dtype), spacing=spacing, calibrationSource=source,
-                    sourceStat=[stat.st_size, stat.st_mtime_ns])
+    from atlas_tiff import inspect_simple
+    return inspect_simple(path)
+
+
+def inspect_inputs(paths):
+    inputs, images, ignored = [], [], []
+    for path in paths:
+        if Path(path).suffix.lower() == '.npy':
+            inputs.append(inspect(path))
+        else:
+            from atlas_tiff import describe
+            catalog = describe(path)
+            try: inputs.append(inspect(path))
+            except ValueError:
+                images.extend(catalog['images']); ignored.extend(catalog['ignored'])
+    return dict(inputs=inputs, tiffImages=images, ignored=ignored)
 
 
 def validate(request):
@@ -87,25 +64,43 @@ def validate(request):
         size=execution.get('planesPerBatch',16)
         if type(size) is not int or not 1<=size<=128:raise ValueError('Planes per batch must be between 1 and 128')
     settings = request['settings']
-    from atlas_cellpose_3d import settings as native_settings
-    native=native_settings(settings)
-    if native['segmentationMode']=='cellpose3d' and (execution.get('splitStacks') or (request.get('linkingMode') or settings.get('linkingMode'))=='streamed'):
-        raise ValueError('Native Cellpose 3D uses complete stacks; disable distributed plane batches and streamed u-Segment3D linking.')
-    from atlas_streamed_linking import validate_mode
-    validate_mode(request.get('linkingMode') or settings.get('linkingMode'))
-    if settings['model'] not in ('cpsam_v2', 'cpdino', 'cpdino-vitb'):
-        raise ValueError('Unsupported Cellpose model.')
-    if not .05 <= float(settings['scale']) <= 1 or not 2 <= float(settings['diameter']) <= 500:
-        raise ValueError('Scale must be 0.05–1 and diameter 2–500 processed pixels.')
+    method=request.get('segmentationMethod') or 'cellpose'
+    if method not in ('cellpose','focus3d'):raise ValueError('Unsupported initial segmentation method.')
+    if method=='focus3d':
+        if execution.get('workers') or execution.get('splitStacks') or not execution.get('useLocal',True):
+            raise ValueError('FOCUS-3D preparation runs on this Mac; disable remote workers and plane batches.')
+        if request.get('linkingMode') not in (None,'standard'):
+            raise ValueError('FOCUS-3D uses its own stitching, not u-Segment3D linking.')
+        from atlas_focus_preparation import validate_settings
+        for entry in request['inputs']:
+            if not entry.get('labels') and not (entry.get('omeZarr') or {}).get('label'):
+                validate_settings(request.get('focusSettings') or {},entry['spacing'])
+    if method=='cellpose':
+        from atlas_cellpose_3d import settings as native_settings
+        native=native_settings(settings)
+        if native['segmentationMode']=='cellpose3d' and (execution.get('splitStacks') or (request.get('linkingMode') or settings.get('linkingMode'))=='streamed'):
+            raise ValueError('Native Cellpose 3D uses complete stacks; disable distributed plane batches and streamed u-Segment3D linking.')
+        from atlas_streamed_linking import validate_mode
+        validate_mode(request.get('linkingMode') or settings.get('linkingMode'))
+        from atlas_cellpose_models import MODEL_NAMES, local_fields
+        local_fields(settings)
+        if settings['model'] not in MODEL_NAMES:
+            raise ValueError('Unsupported Cellpose model.')
+        if not .05 <= float(settings['scale']) <= 1 or not 2 <= float(settings['diameter']) <= 500:
+            raise ValueError('Scale must be 0.05–1 and diameter 2–500 processed pixels.')
     paths = set();zarr_cache={}
     for entry in request['inputs']:
         if entry.get('omeZarr'):
             from atlas_ome_zarr import inspect_entry
             metadata=inspect_entry(entry,zarr_cache)
             key=(metadata['path'],entry['omeZarr']['time'],entry['omeZarr']['channel'],entry['omeZarr']['level'])
+        elif entry.get('tiffSelection'):
+            from atlas_tiff import inspect_entry
+            metadata=inspect_entry(entry)
+            key=(metadata['path'],entry['tiffSelection']['series'],entry['tiffSelection']['time'],entry['tiffSelection']['channel'])
         else:
             metadata=inspect(entry['path']);key=metadata['path']
-        if key in paths:raise ValueError('A stack or OME-Zarr T/C/level selection was selected more than once.')
+        if key in paths:raise ValueError('A stack or series/time/channel selection was selected more than once.')
         paths.add(key)
         spacing = entry.get('spacing') or []
         if len(spacing) != 3 or not all(math.isfinite(v) and v > 0 for v in spacing):
@@ -186,12 +181,22 @@ def prepare_stack(entry, settings, run, logs, progress, export_atlas=True):
     with compute_slot():
         run,logs=Path(run),Path(logs)
         logs.mkdir(parents=True,exist_ok=True)
-        if not (run/'complete.json').exists():
+        if settings.get('segmentationMethod')=='focus3d' and not entry.get('labels'):
+            run.mkdir(parents=True,exist_ok=True)
+            request=run/'focus-dispatch.json'
+            save(request,dict(input=entry,settings=settings['focusSettings']))
+            call([sys.executable,'-u',ROOT/'scripts/atlas_focus_preparation.py','run','--request',request,'--output',run],
+                 logs/f'{run.name}_focus3d.log',progress)
+        elif not (run/'complete.json').exists():
             if entry.get('labels'):
                 imported(entry,run,settings)
             else:
                 args=[sys.executable,'-u',ROOT/'scripts/run_standalone_cellpose.py','--input',entry['path'],'--output',run,
                       '--spacing',*map(str,entry['spacing']),'--scale',settings['scale'],'--diameter',settings['diameter'],'--model',settings['model']]
+                if settings['model']=='local':
+                    from atlas_cellpose_models import local_fields
+                    local=local_fields(settings,freeze=True)
+                    args.extend(['--local-model-path',local['localModelPath'],'--local-model-runtime',local['localModelRuntime'],'--local-model-sha256',local['localModelSHA256']])
                 if not settings['gpu']:args.append('--cpu')
                 if not settings['background']:args.append('--no-background')
                 if settings.get('linkingMode')=='streamed':args.extend(['--linking-mode','streamed'])
@@ -210,6 +215,15 @@ def prepare_stack(entry, settings, run, logs, progress, export_atlas=True):
 def build(request, output):
     # Never adopt or overwrite another experiment, or treat partial output as complete.
     validate(request)
+    if request['settings'].get('model')!='local' and any(k.startswith('localModel') for k in request['settings']):
+        import copy
+        request=copy.deepcopy(request)
+        for key in ('localModelPath','localModelRuntime','localModelSHA256'):request['settings'].pop(key,None)
+    if request.get('segmentationMethod','cellpose')=='cellpose' and request['settings'].get('model')=='local':
+        import copy
+        from atlas_cellpose_models import local_fields
+        request=copy.deepcopy(request)
+        request['settings'].update(local_fields(request['settings'],freeze=True))
     original_request=request
     output = Path(output).resolve()
     for entry in request['inputs']:
@@ -233,12 +247,19 @@ def build(request, output):
         request=copy.deepcopy(request)
         request['settings']['linkingMode']='streamed'
     settings = request['settings']
+    focus=request.get('segmentationMethod')=='focus3d'
+    if focus:settings=dict(settings,segmentationMethod='focus3d',focusSettings=request.get('focusSettings') or {})
     from atlas_preprocessing import check_memory
     required_disk=0
     for index,entry in enumerate(request['inputs']):
         run=output/'stacks'/f'Stack_{index+1:03d}'
         if not entry.get('labels') and not (entry.get('omeZarr') or {}).get('label') and not (run/'aggregate.completed.json').exists():
-            plan=check_memory(entry['shape'],entry['spacing'],settings['scale'],linking_mode=mode)
+            if focus:
+                from atlas_focus_preparation import memory_plan
+                plan=memory_plan(entry['shape'],entry['spacing'],settings['focusSettings'])
+                if not plan['fits']:raise ValueError(f"FOCUS-3D memory estimate {plan['estimatedPeakGiB']:.1f}GiB exceeds budget {plan['budgetGiB']:.1f}GiB. Use a smaller crop.")
+            else:
+                plan=check_memory(entry['shape'],entry['spacing'],settings['scale'],linking_mode=mode)
             if mode=='streamed':
                 from atlas_streamed_linking import check_space
                 cached=sum(p.stat().st_size for p in run.rglob('*') if p.is_file() and not p.is_symlink()) if run.exists() else 0
@@ -248,13 +269,20 @@ def build(request, output):
     if request.get('harmonics', True):
         from harmonics_cajal_core import harmonics  # Check optional dependencies before segmentation.
     from atlas_numpy import is_numpy
-    if any(entry.get('omeZarr') or is_numpy(entry['path']) or (entry.get('labels') and is_numpy(entry['labels'])) for entry in request['inputs']):
+    if any(entry.get('omeZarr') or entry.get('tiffSelection') or is_numpy(entry['path']) or (entry.get('labels') and is_numpy(entry['labels'])) for entry in request['inputs']):
         import copy
         from atlas_ome_zarr import materialize
         request=copy.deepcopy(request)
         for index,entry in enumerate(original_request['inputs']):
             if entry.get('omeZarr'):
                 request['inputs'][index]=materialize(entry,output/'inputs'/f'Stack_{index+1:03d}',lambda line:event(line,.01))
+            elif entry.get('tiffSelection'):
+                from atlas_tiff import materialize as materialize_tiff
+                selected=materialize_tiff(entry,output/'inputs'/f'Stack_{index+1:03d}',lambda line:event(line,.01))
+                if selected.get('labels') and is_numpy(selected['labels']):
+                    from atlas_numpy import materialize as materialize_numpy
+                    selected=materialize_numpy(selected,output/'inputs'/f'Stack_{index+1:03d}_numpy_labels',lambda line:event(line,.01))
+                request['inputs'][index]=selected
             elif is_numpy(entry['path']) or (entry.get('labels') and is_numpy(entry['labels'])):
                 from atlas_numpy import materialize as materialize_numpy
                 request['inputs'][index]=materialize_numpy(entry,output/'inputs'/f'Stack_{index+1:03d}',lambda line:event(line,.01))
@@ -272,7 +300,7 @@ def build(request, output):
         stage_fraction = .7/count
         def stage_progress(line):
             from atlas_cellpose_3d import stage_sequence
-            STAGES=stage_sequence(settings)
+            STAGES=['focus3d','export'] if focus else stage_sequence(settings)
             if line.startswith('@segmentation-progress '):
                 value=json.loads(line[len('@segmentation-progress '):]);phase=value.get('stage')
                 if phase in STAGES:
@@ -297,6 +325,10 @@ def build(request, output):
         if entry.get('omeZarr'):
             data['samples'][index]['name']=entry['name']
             data['samples'][index]['sourceOMEZarr']=dict(path=entry['path'],**entry['omeZarr'])
+        elif entry.get('tiffSelection'):
+            data['samples'][index]['name']=entry['name']
+            source=json.loads((output/'inputs'/f'Stack_{index+1:03d}'/'source.json').read_text())
+            data['samples'][index]['sourceTIFF']=dict(path=entry['path'],**entry['tiffSelection'],sourceSHA256=source['sourceSHA256'])
         elif is_numpy(entry['path']) or (entry.get('labels') and is_numpy(entry['labels'])):
             data['samples'][index]['name']=entry['name']
             source=json.loads((output/'inputs'/f'Stack_{index+1:03d}'/'source.json').read_text())
@@ -350,7 +382,7 @@ def build(request, output):
             event(f'Shape descriptors · {i+1}/{len(data["cells"])} cells', .75+.2*(i+1)/len(data['cells']))
         data['methods'].append(dict(id='spherical_harmonics', name='Raw multi-shell harmonics', metric='euclidean', dimensions=len(vector), variance=[0.,0.], stackVariance=[0.,0.], family='shape', description='Rotation-invariant shell powers; size normalized; same descriptor as the five-organoid benchmark. No training.'))
     event('Calculating joint feature plots and organoid measurements', .96)
-    data['provenance'] = 'Prepared from selected 3D image volumes (TIFF, NumPy Z/Y/X arrays or OME-Zarr T/C/resolution selections). OME-Zarr time points are independent frames, not biological replicates or linked cell tracks. Original surfaces in calibrated micrometers. Voxel spacing was confirmed by the user. Main-organoid membership is classified on the processed segmentation grid. TIFF inputs remain referenced in their original locations. NumPy arrays and selected OME-Zarr volumes are cached as calibrated TIFFs inside the results folder, with original source provenance retained. NumPy files contain no physical calibration; their three axes are interpreted as Z/Y/X without squeezing or transposing. Automated QC flags need review. No biological validation or learned model training is implied.'
+    data['provenance'] = 'Prepared from selected 3D image volumes (TIFF, NumPy Z/Y/X arrays or OME-Zarr T/C/resolution selections). OME-Zarr time points are independent frames, not biological replicates or linked cell tracks. Original surfaces in calibrated micrometers. Voxel spacing was confirmed by the user. Main-organoid membership is classified on the processed segmentation grid. Simple TIFF stacks remain referenced in their original locations. Selected TIFF series/time/channel volumes are streamed into calibrated Z/Y/X TIFF caches inside the results folder, with original axes and source provenance retained. TIFF time points are independent samples, not tracked cells. NumPy arrays and selected OME-Zarr volumes are cached as calibrated TIFFs inside the results folder, with original source provenance retained. NumPy files contain no physical calibration; their three axes are interpreted as Z/Y/X without squeezing or transposing. Automated QC flags need review. No biological validation or learned model training is implied.'
     rebuild(data)
     data['membershipAnalysis']['rule'] = 'Largest 26-connected foreground component on the processed grid; strict majority per cell. Manual overrides take precedence.'
     validate(original_request)
@@ -371,7 +403,7 @@ def main():
         from atlas_ome_zarr import discover
         save(args.output,discover(request['paths']))
     elif args.operation == 'inspect':
-        save(args.output, dict(inputs=[inspect(p) for p in request['paths']]))
+        save(args.output, inspect_inputs(request['paths']))
     else:
         try: os.setsid()
         except OSError: pass

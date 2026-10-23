@@ -9,7 +9,7 @@ swiftc -O -whole-module-optimization "${COMPILER_FLAGS[@]}" -module-name AtlasWo
 from pathlib import Path
 import plistlib,shutil,sys
 root,out=map(Path,sys.argv[1:])
-scripts=['atlas_ome_zarr.py','atlas_numpy.py','atlas_calibration.py','atlas_cellpose_3d.py','atlas_preprocessing.py','atlas_inference_batches.py','atlas_worker.py','atlas_worker_client.py','prepare_atlas_dataset.py','run_standalone_cellpose.py','qc_standalone_cellpose.py','export_standalone_atlas.py','atlas_streamed_linking.py','atlas_streaming_core.py','setup_atlas_worker.sh']
+scripts=['atlas_ome_zarr.py','atlas_numpy.py','atlas_tiff.py','atlas_calibration.py','atlas_cellpose_3d.py','atlas_cellpose_models.py','atlas_preprocessing.py','atlas_inference_batches.py','atlas_worker.py','atlas_worker_client.py','prepare_atlas_dataset.py','run_standalone_cellpose.py','qc_standalone_cellpose.py','export_standalone_atlas.py','atlas_streamed_linking.py','atlas_streaming_core.py','setup_atlas_worker.sh']
 (out/'scripts').mkdir(exist_ok=True)
 for name in scripts:shutil.copy2(root/'scripts'/name,out/'scripts'/name)
 shutil.copy2(root/'requirements-lock.txt',out/'requirements-lock.txt')
@@ -21,7 +21,7 @@ for name in ['LICENSE','LICENSE.txt']:
     path=root/'vendor/u-segment3D'/name
     if path.exists():shutil.copy2(path,out/name)
 app=out/'Atlas Worker.app'
-info=dict(CFBundleExecutable='AtlasWorker',CFBundleIdentifier='org.local.OrganoidAtlas.Worker',CFBundleName='Atlas Worker',CFBundlePackageType='APPL',CFBundleShortVersionString='0.1.5',CFBundleVersion='1',LSMinimumSystemVersion='14.0',NSPrincipalClass='NSApplication',NSLocalNetworkUsageDescription='Advertise an Atlas Worker and process microscopy stacks sent by your paired Macs.',NSBonjourServices=['_atlas-worker._tcp'])
+info=dict(CFBundleExecutable='AtlasWorker',CFBundleIdentifier='org.local.OrganoidAtlas.Worker',CFBundleName='Atlas Worker',CFBundlePackageType='APPL',CFBundleShortVersionString='0.1.6',CFBundleVersion='1',LSMinimumSystemVersion='14.0',NSPrincipalClass='NSApplication',NSLocalNetworkUsageDescription='Advertise an Atlas Worker and process microscopy stacks sent by your paired Macs.',NSBonjourServices=['_atlas-worker._tcp'])
 (app/'Contents/Info.plist').write_bytes(plistlib.dumps(info))
 (out/'README.md').write_text('''# Atlas Worker for Apple Silicon Macs
 
